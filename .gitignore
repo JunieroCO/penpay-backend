@@ -1,25 +1,66 @@
-# CakePHP 3
+### --- Core OS Files ---
+.DS_Store
+Thumbs.db
 
-/vendor/*
-/config/app.php
+### --- PHP / Composer ---
+/vendor/
+/composer.lock
 
-/tmp/cache/models/*
-!/tmp/cache/models/empty
-/tmp/cache/persistent/*
-!/tmp/cache/persistent/empty
-/tmp/cache/views/*
-!/tmp/cache/views/empty
-/tmp/sessions/*
-!/tmp/sessions/empty
-/tmp/tests/*
-!/tmp/tests/empty
+### --- IDE / Editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
 
-/logs/*
-!/logs/empty
+### --- Logs ---
+/logs/
+/storage/logs/
+*.log
 
-# CakePHP 2
+### --- Cache ---
+/cache/
+/tmp/
+/var/cache/
+.phpunit.result.cache
 
-/app/tmp/*
-/app/Config/core.php
-/app/Config/database.php
-/vendors/*
+### --- Docker ---
+/docker-data/
+/mysql_data/
+/redis_data/
+.env.docker
+.env.local
+
+### --- Environment Files ---
+.env
+.env.*
+!env.example        # keep template only
+
+### --- Coverage ---
+/coverage/
+.clover.xml
+.phpunit.cache
+
+### --- Reports / Static Analysis ---
+/phpstan-result.json
+/psalm-cache/
+.php-cs-fixer.cache
+
+### --- Build Artifacts ---
+/build/
+/dist/
+
+### --- Node (if frontend assets appear later) ---
+node_modules/
+npm-debug.log
+yarn-error.log
+
+### --- OS Executable files ---
+*.exe
+*.dll
+*.so
+*.out
+
+### --- Misc ---
+*.cache
+*.pid
+*.seed

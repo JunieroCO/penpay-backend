@@ -1,0 +1,68 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: penpay_app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    networks:
+      - penpay-net
+    environment:
+      PHP_IDE_CONFIG: "serverName=penpay"
+    depends_on:
+      - mysql
+      - redis
+
+  workers:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: penpay_workers
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: php Workers/worker-runner.php
+    volumes:
+      - .:/var/www/html
+    networks:
+      - penpay-net
+    depends_on:
+      - redis
+      - mysql
+
+  mysql:
+    image: mysql:8.0
+    container_name: penpay_mysql
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: penpay
+      MYSQL_USER: penpay
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - penpay-net
+    ports:
+      - "3307:3306"
+
+  redis:
+    image: redis:7.2
+    container_name: penpay_redis
+    restart: unless-stopped
+    networks:
+      - penpay-net
+    ports:
+      - "6380:6379"
+
+networks:
+  penpay-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
