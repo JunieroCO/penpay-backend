@@ -15,47 +15,57 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: penpay_test
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
         ports:
           - 3307:3306
         options: >-
-          --health-cmd="mysqladmin ping"
+          --health-cmd="mysqladmin ping --silent"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4  # ← UPGRADED (critical)
 
-      - name: Install PHP
+      - name: Setup PHP 8.2
         uses: shivammathur/setup-php@v2
         with:
           php-version: "8.2"
           tools: composer:v2
+          coverage: none
+
+      - name: Validate composer.json
+        run: composer validate --strict
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: composer install --prefer-dist --no-progress --no-suggest
 
-      - name: Prepare PHPUnit folders
+      - name: Create required build directories (PREVENTS PHPUNIT CRASH)
         run: |
+          mkdir -p build/reports/tests
+          mkdir -p build/reports/coverage
           mkdir -p build/logs
-          mkdir -p build/coverage/html
 
-      - name: Static Analysis (PHPStan)
+      - name: Run PHPStan (Static Analysis)
         run: |
-          echo "Running PHPStan on src and tests..."
-          vendor/bin/phpstan analyse src --memory-limit=1G
-          if [ -d "tests" ]; then
-            vendor/bin/phpstan analyse tests --memory-limit=1G
-          fi
+          echo "Running PHPStan..."
+          vendor/bin/phpstan analyse src tests --level=max --no-progress || exit 1
 
-      - name: Run Tests (PHPUnit)
+      - name: Run PHPUnit Tests
         run: |
-          if [ -d "tests" ]; then
-            echo "Running PHPUnit tests..."
-            vendor/bin/phpunit --testdox
-          else
-            echo "No tests folder found, skipping PHPUnit"
-          fi
+          echo "Running PHPUnit..."
+          vendor/bin/phpunit --testdox --colors=always
 
-      - name: Build Docker image
-        run: docker build -t penpay-app .
+      - name: Build Docker image (for deployment readiness)
+        run: |
+          docker build -t penpay-backend:latest .
+
+      # Optional: Upload reports as artifacts (great for debugging)
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            build/reports/
+            build/logs/

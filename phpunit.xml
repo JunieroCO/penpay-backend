@@ -4,27 +4,30 @@
          bootstrap="vendor/autoload.php"
          colors="true"
          cacheResult="false">
-    
+
     <testsuites>
         <testsuite name="PenPay Test Suite">
             <directory>tests</directory>
-            <exclude>tests/Bootstrap.php</exclude> <!-- Ignore bootstrap if present -->
         </testsuite>
     </testsuites>
-    
+
     <logging>
-        <!-- No <log> — use this for JUnit/Coverage if needed later -->
-        <junit outputDirectory="build/reports/tests"/>
-        <coverage processUncoveredFiles="true" outputDirectory="build/reports/coverage">
-            <include>
-                <directory suffix=".php">src</directory>
-            </include>
-        </coverage>
+        <junit outputFile="build/reports/tests/junit.xml"/>
+        <coverage-html outputDirectory="build/reports/coverage"/>
     </logging>
-    
+
+    <source>
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+    </source>
+
     <php>
-        <includePath>.</includePath>
+        <env name="APP_ENV" value="testing"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="3307"/>
+        <env name="DB_DATABASE" value="penpay_test"/>
+        <env name="DB_USERNAME" value="root"/>
+        <env name="DB_PASSWORD" value=""/>
     </php>
-    
-    <!-- No deprecated attributes or filters -->
 </phpunit>
