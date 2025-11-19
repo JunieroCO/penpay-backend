@@ -13,14 +13,20 @@
 
     <logging>
         <junit outputFile="build/reports/tests/junit.xml"/>
+        <!-- HTML coverage report -->
         <coverage-html outputDirectory="build/reports/coverage"/>
     </logging>
 
-    <source>
+    <!-- This is the ONLY correct way in PHPUnit 10+ -->
+    <coverage>
         <include>
             <directory suffix=".php">src</directory>
         </include>
-    </source>
+        <report>
+            <html outputDirectory="build/reports/coverage"/>
+            <text outputFile="build/reports/coverage.txt"/>
+        </report>
+    </coverage>
 
     <php>
         <env name="APP_ENV" value="testing"/>
