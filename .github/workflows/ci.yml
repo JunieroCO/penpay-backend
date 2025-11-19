@@ -36,7 +36,7 @@ jobs:
         run: composer install --prefer-dist --no-progress
 
       - name: Static Analysis
-        run: vendor/bin/phpstan analyse --memory-limit=1G
+        run: vendor/bin/phpstan analyse src tests --memory-limit=1G
 
       - name: Run Tests
         run: vendor/bin/phpunit --testdox
