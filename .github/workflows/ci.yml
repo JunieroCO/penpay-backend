@@ -35,17 +35,24 @@ jobs:
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
 
+      - name: Prepare PHPUnit folders
+        run: |
+          mkdir -p build/logs
+          mkdir -p build/coverage/html
+
       - name: Static Analysis (PHPStan)
         run: |
           echo "Running PHPStan on src and tests..."
           vendor/bin/phpstan analyse src --memory-limit=1G
-          vendor/bin/phpstan analyse tests --memory-limit=1G
+          if [ -d "tests" ]; then
+            vendor/bin/phpstan analyse tests --memory-limit=1G
+          fi
 
       - name: Run Tests (PHPUnit)
         run: |
           if [ -d "tests" ]; then
             echo "Running PHPUnit tests..."
-            vendor/bin/phpunit --testdox --do-not-fail-on-empty-test-suite
+            vendor/bin/phpunit --testdox
           else
             echo "No tests folder found, skipping PHPUnit"
           fi

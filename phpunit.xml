@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    bootstrap="vendor/autoload.php"
+    colors="true"
+    verbose="true"
+    stopOnFailure="false"
+    failOnEmptyTestSuite="false"
+    beStrictAboutTestsThatDoNotTestAnything="true"
+    beStrictAboutOutputDuringTests="true"
+    beStrictAboutChangesToGlobalState="true"
+    convertErrorsToExceptions="true"
+    convertNoticesToExceptions="true"
+    convertWarningsToExceptions="true"
+    processIsolation="false"
+    cacheResultFile=".phpunit.cache"
+>
+    <testsuites>
+        <testsuite name="PenPay Backend Tests">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+
+    <logging>
+        <!-- TestDox text output -->
+        <log type="testdox-text" target="build/logs/testdox.txt"/>
+
+        <!-- JUnit XML for CI/CD -->
+        <log type="junit" target="build/logs/junit.xml" logIncompleteSkipped="true"/>
+
+        <!-- Coverage reports -->
+        <log type="coverage-html" target="build/coverage/html"/>
+        <log type="coverage-clover" target="build/coverage/clover.xml"/>
+    </logging>
+
+    <filter>
+        <whitelist processUncoveredFilesFromWhitelist="true">
+            <directory suffix=".php">src</directory>
+        </whitelist>
+    </filter>
+
+    <php>
+        <!-- Environment variables for tests -->
+        <env name="APP_ENV" value="test"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_USER" value="root"/>
+        <env name="DB_PASS" value="root"/>
+        <env name="DB_NAME" value="penpay_test"/>
+    </php>
+</phpunit>
