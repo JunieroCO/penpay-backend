@@ -19,7 +19,7 @@
         "ext-pdo": "*",
         "php-di/php-di": "^7.1",
         "guzzlehttp/guzzle": "^7.8",
-        "ramsey/ulid": "^2.0",
+        "ramsey/uuid": "^4.7",
         "predis/predis": "^2.2",
         "monolog/monolog": "^3.5",
         "doctrine/dbal": "^3.8"
