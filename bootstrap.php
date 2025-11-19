@@ -22,9 +22,8 @@ $containerBuilder->addDefinitions([
     ]
 ]);
 
-// Autowire application services, repositories, gateways
+// Enable autowiring (safe in PHP-DI v7)
 $containerBuilder->useAutowiring(true);
-$containerBuilder->useAnnotations(false);
 
 $container = $containerBuilder->build();
 
