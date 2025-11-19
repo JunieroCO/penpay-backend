@@ -1,49 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit
-    bootstrap="vendor/autoload.php"
-    colors="true"
-    verbose="true"
-    stopOnFailure="false"
-    failOnEmptyTestSuite="false"
-    beStrictAboutTestsThatDoNotTestAnything="true"
-    beStrictAboutOutputDuringTests="true"
-    beStrictAboutChangesToGlobalState="true"
-    convertErrorsToExceptions="true"
-    convertNoticesToExceptions="true"
-    convertWarningsToExceptions="true"
-    processIsolation="false"
-    cacheResultFile=".phpunit.cache"
->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheResult="false">
+    
     <testsuites>
-        <testsuite name="PenPay Backend Tests">
+        <testsuite name="PenPay Test Suite">
             <directory>tests</directory>
+            <exclude>tests/Bootstrap.php</exclude> <!-- Ignore bootstrap if present -->
         </testsuite>
     </testsuites>
-
+    
     <logging>
-        <!-- TestDox text output -->
-        <log type="testdox-text" target="build/logs/testdox.txt"/>
-
-        <!-- JUnit XML for CI/CD -->
-        <log type="junit" target="build/logs/junit.xml" logIncompleteSkipped="true"/>
-
-        <!-- Coverage reports -->
-        <log type="coverage-html" target="build/coverage/html"/>
-        <log type="coverage-clover" target="build/coverage/clover.xml"/>
+        <!-- No <log> — use this for JUnit/Coverage if needed later -->
+        <junit outputDirectory="build/reports/tests"/>
+        <coverage processUncoveredFiles="true" outputDirectory="build/reports/coverage">
+            <include>
+                <directory suffix=".php">src</directory>
+            </include>
+        </coverage>
     </logging>
-
-    <filter>
-        <whitelist processUncoveredFilesFromWhitelist="true">
-            <directory suffix=".php">src</directory>
-        </whitelist>
-    </filter>
-
+    
     <php>
-        <!-- Environment variables for tests -->
-        <env name="APP_ENV" value="test"/>
-        <env name="DB_HOST" value="127.0.0.1"/>
-        <env name="DB_USER" value="root"/>
-        <env name="DB_PASS" value="root"/>
-        <env name="DB_NAME" value="penpay_test"/>
+        <includePath>.</includePath>
     </php>
+    
+    <!-- No deprecated attributes or filters -->
 </phpunit>
