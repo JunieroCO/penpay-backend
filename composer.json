@@ -1,37 +1,66 @@
 {
     "name": "penpay/backend",
-    "description": "PenPay Backend - Non-custodial financial bridge (M-Pesa ↔ Deriv)",
+    "description": "PenPay Backend — Non-custodial financial bridge (M-Pesa ↔ Deriv)",
     "type": "project",
+    "license": "proprietary",
+    "authors": [
+        {
+            "name": "JunieroCO",
+            "email": "security@penpay.co"
+        }
+    ],
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+
     "require": {
         "php": "^8.2",
-        "php-di/php-di": "^7.1",
         "ext-json": "*",
         "ext-mbstring": "*",
+        "ext-pdo": "*",
+        "php-di/php-di": "^7.1",
         "guzzlehttp/guzzle": "^7.8",
-        "ramsey/uuid": "^4.7",
+        "ramsey/ulid": "^2.0",
         "predis/predis": "^2.2",
-        "monolog/monolog": "^3.5"
+        "monolog/monolog": "^3.5",
+        "doctrine/dbal": "^3.8"
     },
+
     "require-dev": {
         "phpunit/phpunit": "^10.5",
         "phpstan/phpstan": "^1.11",
-        "friendsofphp/php-cs-fixer": "^3.50"
+        "friendsofphp/php-cs-fixer": "^3.50",
+        "mockery/mockery": "^1.6"
     },
+
     "autoload": {
         "psr-4": {
             "PenPay\\": "src/"
         }
     },
+
     "autoload-dev": {
         "psr-4": {
             "PenPay\\Tests\\": "tests/"
         }
     },
+
     "scripts": {
         "test": "phpunit",
+        "test:coverage": "phpunit --coverage-html build/reports/coverage",
         "analyse": "phpstan analyse",
-        "fix": "php-cs-fixer fix"
+        "fix": "php-cs-fixer fix",
+        "ci": [
+            "composer validate --strict",
+            "phpstan analyse",
+            "phpunit --no-coverage"
+        ]
     },
-    "minimum-stability": "stable",
-    "prefer-stable": true
+
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
+    }
 }
