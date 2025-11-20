@@ -6,12 +6,12 @@ namespace PenPay\Domain\Payments\Event;
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use DateTimeImmutable;
 
-final readonly class TransactionCompleted
+final readonly class TransactionFailed
 {
     public function __construct(
         public TransactionId $transactionId,
-        public string $derivTransferId,
-        public string $derivTxnId,
-        public DateTimeImmutable $completedAt
+        public string $reason,
+        public ?string $providerError,
+        public DateTimeImmutable $failedAt
     ) {}
 }

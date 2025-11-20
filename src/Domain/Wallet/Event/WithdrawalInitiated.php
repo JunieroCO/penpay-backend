@@ -5,17 +5,14 @@ namespace PenPay\Domain\Wallet\Event;
 
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
-use PenPay\Domain\Wallet\ValueObject\LockedRate;
 use DateTimeImmutable;
 
-final readonly class DepositInitiated
+final readonly class WithdrawalInitiated
 {
     public function __construct(
         public string $userId,
         public TransactionId $transactionId,
         public Money $amountUsd,
-        public Money $amountKes,
-        public LockedRate $lockedRate,
         public DateTimeImmutable $initiatedAt
     ) {}
 }
