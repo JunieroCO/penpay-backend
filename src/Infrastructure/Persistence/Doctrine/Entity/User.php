@@ -14,14 +14,6 @@ use PenPay\Domain\User\ValueObject\{
     PasswordHash,
     KycSnapshot
 };
-use PenPay\Infrastructure\Persistence\Doctrine\Type\{
-    UserIdType,
-    EmailType,
-    PhoneNumberType,
-    DerivLoginIdType,
-    PasswordHashType,
-    KycSnapshotType
-};
 
 #[ORM\Entity]
 #[ORM\Table(name: 'users')]
@@ -33,32 +25,32 @@ use PenPay\Infrastructure\Persistence\Doctrine\Type\{
 final class User
 {
     #[ORM\Id]
-    #[ORM\Column(type: UserIdType::NAME, length: 36)]
+    #[ORM\Column(type: 'user_id')]
     private UserId $id;
 
-    #[ORM\Column(type: EmailType::NAME, length: 255)]
+    #[ORM\Column(type: 'email', length: 255, unique: true)]
     private Email $email;
 
-    #[ORM\Column(type: PhoneNumberType::NAME, length: 16)]
+    #[ORM\Column(type: 'phone_number', length: 20, unique: true)]
     private PhoneNumber $phone;
 
-    #[ORM\Column(type: DerivLoginIdType::NAME, length: 50)]
+    #[ORM\Column(type: 'deriv_login_id', unique: true)]
     private DerivLoginId $derivLoginId;
 
-    #[ORM\Column(type: PasswordHashType::NAME, length: 255)]
+    #[ORM\Column(type: 'password_hash', length: 255)]
     private PasswordHash $passwordHash;
 
     #[ORM\Embedded(class: KycSnapshot::class, columnPrefix: 'kyc_')]
     private KycSnapshot $kyc;
 
-    /** @var ArrayCollection<int, UserDevice> */
+    /** @var Collection<int, UserDevice> */
     #[ORM\OneToMany(
         mappedBy: 'user',
         targetEntity: UserDevice::class,
         cascade: ['persist', 'remove'],
         orphanRemoval: true
     )]
-    private ArrayCollection $devices;
+    private Collection $devices;
 
     #[ORM\Column(type: 'datetime_immutable')]
     private \DateTimeImmutable $createdAt;
@@ -79,7 +71,10 @@ final class User
     public function getCreatedAt(): \DateTimeImmutable { return $this->createdAt; }
 
     /** @return Collection<int, UserDevice> */
-    public function getDevices(): Collection { return $this->devices; }
+    public function getDevices(): Collection
+    {
+        return $this->devices;
+    }
 
     // === Setters — used ONLY by DoctrineUserRepository ===
     public function setId(UserId $id): void { $this->id = $id; }

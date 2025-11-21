@@ -33,6 +33,11 @@ final readonly class DerivLoginId
         return new self($value);
     }
 
+    public static function fromInt(int $value): self
+    {
+        return new self((string) $value);
+    }
+
     public function value(): string
     {
         return $this->value;

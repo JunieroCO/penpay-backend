@@ -36,4 +36,19 @@ final readonly class UserId
     {
         return $this->value;
     }
+
+    public function toBytes(): string
+    {
+        // Returns 16-byte binary representation suitable for binary(16) storage
+        return Uuid::fromString($this->value)->getBytes();
+    }
+
+    public static function fromBytes(string $bytes): self
+    {
+        if ($bytes === '') {
+            throw new InvalidArgumentException('Cannot create UserId from empty bytes');
+        }
+
+        return new self(Uuid::fromBytes($bytes)->toString());
+    }
 }

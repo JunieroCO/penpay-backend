@@ -1,0 +1,27 @@
+doctrine:
+    dbal:
+        url: '%env(resolve:DATABASE_URL)%'
+        types:
+            user_id:         PenPay\Infrastructure\Doctrine\Types\UserIdType
+            email:           PenPay\Infrastructure\Doctrine\Types\EmailType
+            phone_number:    PenPay\Infrastructure\Doctrine\Types\PhoneNumberType
+            deriv_login_id:  PenPay\Infrastructure\Doctrine\Types\DerivLoginIdType
+            password_hash:   PenPay\Infrastructure\Doctrine\Types\PasswordHashType
+            kyc_snapshot:    PenPay\Infrastructure\Doctrine\Types\KycSnapshotType
+        mapping_types:
+            user_id:      binary
+            kyc_snapshot: json
+    orm:
+        auto_generate_proxy_classes: true
+        enable_lazy_ghost_objects: true
+        report_fields_where_declared: true
+        validate_xml_mapping: true
+        naming_strategy: doctrine.orm.naming_strategy.underscore_number_aware
+        auto_mapping: true
+        mappings:
+            App:
+                is_bundle: false
+                type: attribute
+                dir: '%kernel.project_dir%/src/Infrastructure/Persistence/Doctrine/Entity'
+                prefix: 'PenPay\Infrastructure\Persistence\Doctrine\Entity'
+                alias: Entity
