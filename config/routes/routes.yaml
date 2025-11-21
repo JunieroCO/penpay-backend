@@ -1,0 +1,7 @@
+_api:
+    path: /api/v1
+    controller: App\Controller\ApiController
+    requirements:
+        _format: json
+    middleware:
+        - PenPay\Presentation\Http\Middleware\JwtAuthMiddleware
