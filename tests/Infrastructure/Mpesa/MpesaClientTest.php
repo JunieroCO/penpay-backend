@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+namespace PenPay\Tests\Infrastructure\Mpesa;
+
 use PHPUnit\Framework\TestCase;
 
 final class MpesaClientTest extends TestCase
