@@ -64,6 +64,31 @@ final readonly class KycSnapshot
             phoneVerified: ($get['phone_number_verification']['verified'] ?? false) === 1,
         );
     }
+    public static function empty(): self
+    {
+        return new self(
+            firstName: '',
+            lastName: '',
+            email: '',
+            phoneNumber: '',
+            countryCode: '',
+            dateOfBirthTimestamp: 0,
+            accountOpeningReason: '',
+            addressCity: '',
+            addressLine1: '',
+            addressLine2: null,
+            addressPostcode: null,
+            addressState: null,
+            employmentStatus: 'Unknown',
+            citizen: null,
+            placeOfBirth: '',
+            residence: '',
+            taxIdentificationNumber: null,
+            emailConsent: false,
+            nonPepDeclaration: false,
+            phoneVerified: false,
+        );
+    }
 
     public static function fromArray(array $data): self
     {

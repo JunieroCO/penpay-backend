@@ -8,7 +8,7 @@ use PenPay\Domain\Shared\Kernel\DomainEvent;
 /**
  * @template T of DomainEvent
  */
-final class AggregateRoot
+class AggregateRoot
 {
     /** @var list<T> */
     private array $recordedEvents;

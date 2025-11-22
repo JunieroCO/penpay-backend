@@ -64,3 +64,6 @@ yarn-error.log
 *.cache
 *.pid
 *.seed
+
+### --- testing ---
+/tests/keys/

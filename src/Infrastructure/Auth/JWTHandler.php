@@ -3,22 +3,39 @@ declare(strict_types=1);
 
 namespace PenPay\Infrastructure\Auth;
 
-use DateTimeImmutable;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use DateTimeImmutable;
 use RuntimeException;
 
 final class JWTHandler
 {
     private const ALGO = 'RS256';
 
+    private readonly \OpenSSLAsymmetricKey $privateKey;
+    private readonly \OpenSSLAsymmetricKey $publicKey;
+
     public function __construct(
-        private readonly string $privateKey,
-        private readonly string $publicKey,
+        string $privateKeyPath,
+        string $publicKeyPath,
         private readonly string $issuer,
-        private readonly int $accessTokenTtl = 900, // 15 min
+        private readonly int $accessTokenTtl = 900,
     ) {
-        JWT::$leeway = 60; // tolerance for clock drift
+        // No need to set leeway in modern versions - it's handled automatically
+
+        $privatePem = file_get_contents($privateKeyPath);
+        $publicPem  = file_get_contents($publicKeyPath);
+
+        if ($privatePem === false || $publicPem === false) {
+            throw new RuntimeException('Failed to read JWT key files');
+        }
+
+        $this->privateKey = openssl_pkey_get_private($privatePem);
+        $this->publicKey  = openssl_pkey_get_public($publicPem);
+
+        if ($this->privateKey === false || $this->publicKey === false) {
+            throw new RuntimeException('Invalid JWT key: ' . openssl_error_string());
+        }
     }
 
     public function issueAccessToken(
@@ -44,11 +61,9 @@ final class JWTHandler
     {
         try {
             $decoded = JWT::decode($token, new Key($this->publicKey, self::ALGO));
-
             if ($decoded->iss !== $this->issuer) {
                 throw new RuntimeException('Invalid issuer');
             }
-
             return $decoded;
         } catch (\Exception $e) {
             throw new RuntimeException('Invalid token: ' . $e->getMessage());

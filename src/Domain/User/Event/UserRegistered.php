@@ -16,14 +16,19 @@ final class UserRegistered implements DomainEvent
         public readonly \DateTimeImmutable $occurredAt = new \DateTimeImmutable(),
     ) {}
 
+    public function occurredAt(): \DateTimeImmutable
+    {
+        return $this->occurredAt;
+    }
+
     public function toArray(): array
     {
         return [
-            'userId' => (string) $this->userId,
-            'email' => $this->email,
-            'phone' => $this->phone,
+            'userId'       => (string) $this->userId,
+            'email'        => $this->email,
+            'phone'        => $this->phone,
             'derivLoginId' => $this->derivLoginId,
-            'occurredAt' => $this->occurredAt->format('c'),
+            'occurredAt'   => $this->occurredAt->format('c'),
         ];
     }
 }

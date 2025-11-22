@@ -18,7 +18,7 @@ final readonly class PasswordHash
     }
 
     /**
-     * Create from an already-computed Argon2id hash (Infrastructure → Domain)
+     * Create from an already-computed Argon2id hash (used in infrastructure → domain)
      */
     public static function fromHash(string $hash): self
     {
@@ -26,16 +26,28 @@ final readonly class PasswordHash
     }
 
     /**
-     * Verify a plain password against the stored hash
+     * Hash a plain password (test + registration use case)
      */
+    public static function hash(string $plainPassword): self
+    {
+        $hashed = password_hash(
+            $plainPassword,
+            PASSWORD_ARGON2ID,
+            ['memory_cost' => 65536, 'time_cost' => 4, 'threads' => 3]
+        );
+
+        if ($hashed === false) {
+            throw new InvalidArgumentException('Failed to hash password');
+        }
+
+        return new self($hashed);
+    }
+
     public function verify(string $plainPassword): bool
     {
         return password_verify($plainPassword, $this->hash);
     }
 
-    /**
-     * Returns the hash for persistence
-     */
     public function toString(): string
     {
         return $this->hash;
