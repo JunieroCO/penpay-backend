@@ -34,9 +34,9 @@ final readonly class AuthResponse
 
         return new self(
             accessToken:            $accessToken,
-            accessTokenExpiresIn:   PositiveInteger::create($accessTokenExpiresIn ?? self::DEFAULT_ACCESS_TTL),
+            accessTokenExpiresIn:   PositiveInteger::fromInt($accessTokenExpiresIn ?? self::DEFAULT_ACCESS_TTL),
             refreshToken:           $refreshToken,
-            refreshTokenExpiresIn:  PositiveInteger::create($refreshTokenExpiresIn ?? self::DEFAULT_REFRESH_TTL),
+            refreshTokenExpiresIn:  PositiveInteger::fromInt($refreshTokenExpiresIn ?? self::DEFAULT_REFRESH_TTL),
         );
     }
 
@@ -62,9 +62,9 @@ final readonly class AuthResponse
     {
         return new self(
             accessToken:           $data['access_token']           ?? throw new InvalidArgumentException('access_token missing'),
-            accessTokenExpiresIn:  PositiveInteger::create((int)($data['expires_in'] ?? self::DEFAULT_ACCESS_TTL)),
+            accessTokenExpiresIn:  PositiveInteger::fromInt((int)($data['expires_in'] ?? self::DEFAULT_ACCESS_TTL)),
             refreshToken:          $data['refresh_token']          ?? throw new InvalidArgumentException('refresh_token missing'),
-            refreshTokenExpiresIn: PositiveInteger::create((int)($data['refresh_expires_in'] ?? self::DEFAULT_REFRESH_TTL)),
+            refreshTokenExpiresIn: PositiveInteger::fromInt((int)($data['refresh_expires_in'] ?? self::DEFAULT_REFRESH_TTL)),
         );
     }
 }

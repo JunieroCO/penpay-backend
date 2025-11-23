@@ -5,17 +5,29 @@ namespace PenPay\Domain\Shared\ValueObject;
 
 use InvalidArgumentException;
 
-final readonly class PositiveInteger
+final readonly class PositiveInteger  
 {
-    public function __construct(public int $value)
-    {
+    public function __construct(
+        public int $value
+    ) {
         if ($value <= 0) {
-            throw new InvalidArgumentException('Value must be a positive integer');
+            throw new InvalidArgumentException('Value must be positive');
         }
     }
 
-    public static function create(int $value): self
+    public static function fromInt(int $value): self
     {
         return new self($value);
+    }
+    
+
+    public function toInt(): int
+    {
+        return $this->value;
+    }
+
+    public function __toString(): string
+    {
+        return (string) $this->value;
     }
 }

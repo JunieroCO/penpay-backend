@@ -5,15 +5,9 @@ namespace PenPay\Domain\Wallet\ValueObject;
 
 use InvalidArgumentException;
 
-enum Currency: string
-{
-    case USD = 'USD';
-    case KES = 'KES';
-}
-
 final readonly class Money
 {
-    private const SCALE = 100; // 2 decimal places → cents
+    private const SCALE = 100; 
 
     public function __construct(
         public int $cents,
@@ -41,7 +35,7 @@ final readonly class Money
 
     public static function fromDecimal(string|float $amount, Currency $currency): self
     {
-        $cents = (int) round((float)$amount * self::SCALE);
+        $cents = (int) round((float) $amount * self::SCALE);
         return new self(abs($cents), $currency);
     }
 
