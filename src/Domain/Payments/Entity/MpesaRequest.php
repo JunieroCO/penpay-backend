@@ -29,6 +29,24 @@ final readonly class MpesaRequest
             throw new InvalidArgumentException('M-Pesa amount must be in KES');
         }
     }
+    public static function initiated(
+        TransactionId $transactionId,
+        string $checkoutRequestId,
+        string $phoneNumber,
+        int $amountKesCents,
+        ?string $merchantRequestId = null
+    ): self {
+        return new self(
+            transactionId: $transactionId,
+            phoneNumber: $phoneNumber,
+            amountKes: Money::kes($amountKesCents),
+            merchantRequestId: $merchantRequestId ?? 'merchant-' . uniqid(),
+            checkoutRequestId: $checkoutRequestId,
+            mpesaReceiptNumber: null,
+            callbackReceivedAt: null,
+            initiatedAt: new DateTimeImmutable()
+        );
+    }
 
     public function isCallbackReceived(): bool
     {
