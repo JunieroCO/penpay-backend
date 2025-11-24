@@ -3,47 +3,74 @@ declare(strict_types=1);
 
 namespace PenPay\Workers;
 
-use PenPay\Domain\Payments\Aggregate\Transaction;
+use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
+use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Domain\Payments\Entity\MpesaRequest;
-use PenPay\Infrastructure\Persistence\TransactionRepositoryInterface;
-use PenPay\Infrastructure\Queue\RedisStreamConsumer;
-use DateTimeImmutable;
+use Psr\Log\LoggerInterface;
 
 final class MpesaCallbackWorker
 {
     public function __construct(
-        private TransactionRepositoryInterface $transactionRepo,
-        private RedisStreamConsumer $consumer
+        private readonly TransactionRepositoryInterface $txRepo,
+        private readonly RedisStreamPublisherInterface $publisher,
+        private readonly LoggerInterface $logger
     ) {}
 
-    public function run(): void
+    public function handle(array $verified): void
     {
-        $this->consumer->consume('mpesa.callback', function (array $message) {
-            $tx = $this->transactionRepo->findById($message['transaction_id']);
-            if (!$tx || $tx->getStatus()->isMpesaConfirmed()) {
-                return; // idempotent
-            }
+        $txId = $verified['transaction_id'];
 
-            $request = new MpesaRequest(
-                transactionId: $tx->getId(),
-                phoneNumber: $message['phone'],
-                amountKes: $tx->getAmount(),
-                merchantRequestId: $message['merchant_id'],
-                checkoutRequestId: $message['checkout_id'],
-                mpesaReceiptNumber: $message['receipt'],
-                callbackReceivedAt: new DateTimeImmutable(),
-                initiatedAt: new DateTimeImmutable()
+        $transaction = $this->txRepo->getById($txId);
+        if (!$transaction) {
+            $this->logger->error('MpesaCallbackWorker: transaction not found', ['transaction_id' => $txId]);
+            return;
+        }
+
+        // Idempotency: if already finalized
+        if ($transaction->getStatus()->isCompleted() || $transaction->getStatus()->isFailed()) {
+            $this->logger->info('Callback ignored: transaction already finalized', [
+                'transaction_id' => $txId,
+                'current_status' => $transaction->getStatus()->value
+            ]);
+            return;
+        }
+
+        if ($verified['status'] === 'success') {
+            $mpesaRequest = MpesaRequest::fromCallback(
+                checkoutRequestId: $verified['checkout_request_id'],
+                mpesaReceiptNumber: $verified['mpesa_receipt'],
+                phoneNumber: $verified['phone'],
+                amountKesCents: $verified['amount_kes_cents'],
+                callbackReceivedAt: new \DateTimeImmutable()
             );
 
-            $tx->recordMpesaCallback($request);
-            $this->transactionRepo->save($tx);
+            $transaction->recordMpesaCallback($mpesaRequest);
+            $this->txRepo->save($transaction);
 
-            // Trigger Deriv transfer
-            $this->publisher->publish('deriv.transfer.requested', [
-                'transaction_id' => $tx->getId()->value,
-                'deriv_login_id' => $message['deriv_login_id'],
-                'usd_cents' => $message['usd_cents'],
+            $this->publisher->publish('deposits.mpesa_confirmed', [
+                'transaction_id' => $txId,
+                'mpesa_receipt' => $verified['mpesa_receipt'],
+                'amount_kes_cents' => $verified['amount_kes_cents'],
+                'phone' => $verified['phone'],
             ]);
-        });
+
+            $this->logger->info('M-Pesa deposit confirmed', ['transaction_id' => $txId]);
+            return;
+        }
+
+        // Failed
+        $transaction->fail('mpesa_user_cancelled');
+        $this->txRepo->save($transaction);
+
+        $this->publisher->publish('deposits.failed', [
+            'transaction_id' => $txId,
+            'reason' => 'user_cancelled_or_timeout',
+            'result_code' => $verified['result_code'],
+        ]);
+
+        $this->logger->warning('M-Pesa deposit failed', [
+            'transaction_id' => $txId,
+            'result_code' => $verified['result_code']
+        ]);
     }
 }
