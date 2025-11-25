@@ -5,6 +5,7 @@ namespace PenPay\Domain\Payments\Aggregate;
 
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Payments\ValueObject\TransactionStatus;
+use PenPay\Domain\Payments\ValueObject\TransactionType;
 use PenPay\Domain\Payments\ValueObject\IdempotencyKey;
 use PenPay\Domain\Wallet\ValueObject\Money;
 use PenPay\Domain\Wallet\ValueObject\Currency;
@@ -16,12 +17,6 @@ use PenPay\Domain\Payments\Event\TransactionCompleted;
 use PenPay\Domain\Payments\Event\TransactionFailed;
 use InvalidArgumentException;
 
-enum TransactionType: string
-{
-    case DEPOSIT = 'deposit';
-    case WITHDRAWAL = 'withdrawal';
-}
-
 final class Transaction
 {
     private TransactionId $id;
@@ -29,8 +24,14 @@ final class Transaction
     private Money $amount;
     private IdempotencyKey $idempotencyKey;
     private TransactionStatus $status;
+
     private ?MpesaRequest $mpesaRequest = null;
     private ?DerivTransfer $derivTransfer = null;
+
+    // Deriv settlement data — set once, early
+    private ?string $userDerivLoginId = null;
+    private ?string $paymentAgentToken = null;
+    private ?float $amountUsd = null;
 
     /** @var object[] */
     private array $recordedEvents = [];
@@ -49,7 +50,7 @@ final class Transaction
 
         $this->raise(new TransactionCreated(
             transactionId: $id,
-            userId: '', // Will be filled by service layer
+            userId: '', // Filled by service layer
             type: $type->value,
             amount: $amount,
             idempotencyKey: $idempotencyKey,
@@ -57,15 +58,25 @@ final class Transaction
         ));
     }
 
+    // === FACTORY METHODS ===
     public static function initiateDeposit(
         TransactionId $id,
         Money $amountKes,
-        IdempotencyKey $idempotencyKey
+        IdempotencyKey $idempotencyKey,
+        ?string $userDerivLoginId = null,
+        ?string $paymentAgentToken = null,
+        ?float $amountUsd = null
     ): self {
         if ($amountKes->currency !== Currency::KES) {
             throw new InvalidArgumentException('Deposit must be in KES');
         }
-        return new self($id, TransactionType::DEPOSIT, $amountKes, $idempotencyKey);
+
+        $tx = new self($id, TransactionType::DEPOSIT, $amountKes, $idempotencyKey);
+        $tx->userDerivLoginId = $userDerivLoginId;
+        $tx->paymentAgentToken = $paymentAgentToken;
+        $tx->amountUsd = $amountUsd;
+
+        return $tx;
     }
 
     public static function initiateWithdrawal(
@@ -76,9 +87,11 @@ final class Transaction
         if ($amountUsd->currency !== Currency::USD) {
             throw new InvalidArgumentException('Withdrawal must be in USD');
         }
+
         return new self($id, TransactionType::WITHDRAWAL, $amountUsd, $idempotencyKey);
     }
 
+    // === DOMAIN BEHAVIOR ===
     public function recordMpesaCallback(MpesaRequest $request): void
     {
         if (!$this->status->isPending()) {
@@ -103,7 +116,7 @@ final class Transaction
     public function completeWithDerivTransfer(DerivTransfer $transfer): void
     {
         if ($this->type === TransactionType::DEPOSIT && !$this->status->isMpesaConfirmed()) {
-            throw new InvalidArgumentException('M-Pesa callback required before Deriv transfer');
+            throw new InvalidArgumentException('M-Pesa callback required before completing deposit');
         }
 
         $this->derivTransfer = $transfer;
@@ -117,23 +130,66 @@ final class Transaction
         ));
     }
 
-    public function fail(string $reason): void
+    public function fail(string $reason, ?string $providerError = null): void
     {
         $this->status = TransactionStatus::FAILED;
+
         $this->raise(new TransactionFailed(
             transactionId: $this->id,
             reason: $reason,
-            providerError: null,
+            providerError: $providerError,
             failedAt: new \DateTimeImmutable()
         ));
     }
 
-    // Getters
+    // === GUARDS & QUERIES (for DerivTransferWorker) ===
+    public function hasMpesaCallback(): bool
+    {
+        return $this->mpesaRequest !== null;
+    }
+
+    public function hasDerivCredentials(): bool
+    {
+        return $this->userDerivLoginId !== null && $this->paymentAgentToken !== null;
+    }
+
+    public function hasUsdAmount(): bool
+    {
+        return $this->amountUsd !== null && $this->amountUsd > 0;
+    }
+
+    public function isFinalized(): bool
+    {
+        return $this->status->isCompleted() || $this->status->isFailed();
+    }
+
+    public function userDerivLoginId(): ?string
+    {
+        return $this->userDerivLoginId;
+    }
+
+    public function paymentAgentToken(): ?string
+    {
+        return $this->paymentAgentToken;
+    }
+
+    public function amountUsd(): ?float
+    {
+        return $this->amountUsd;
+    }
+
+    public function mpesaReceiptNumber(): ?string
+    {
+        return $this->mpesaRequest?->mpesaReceiptNumber;
+    }
+
+    // === STANDARD GETTERS ===
     public function getId(): TransactionId { return $this->id; }
     public function getAmount(): Money { return $this->amount; }
     public function getStatus(): TransactionStatus { return $this->status; }
     public function getType(): TransactionType { return $this->type; }
 
+    // === EVENT SOURCING ===
     private function raise(object $event): void
     {
         $this->recordedEvents[] = $event;

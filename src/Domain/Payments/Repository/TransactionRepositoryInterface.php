@@ -14,7 +14,7 @@ interface TransactionRepositoryInterface
     public function findById(TransactionId $id): ?Transaction;
 
     /** @throws \DomainException if not found */
-    public function getById(TransactionId $id): Transaction;
+    public function getById(TransactionId $id): ?Transaction;
 
     public function findByIdempotencyKey(IdempotencyKey $key): ?Transaction;
 
