@@ -36,4 +36,11 @@ interface DerivGatewayInterface
         string $reference,
         array $metadata = []
     ): DerivTransferResult;
+
+    public function paymentAgentWithdraw(
+        string $loginId,
+        float $amountUsd,
+        string $verificationCode,
+        string $reference
+    ): DerivTransferResult;
 }

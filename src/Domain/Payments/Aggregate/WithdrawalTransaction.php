@@ -30,6 +30,10 @@ final class WithdrawalTransaction
     private ?DerivWithdrawal $derivWithdrawal = null;
     private ?MpesaDisbursement $mpesaDisbursement = null;
 
+    // PA credentials — attached once, used once, stored forever (audit)
+    private ?string $paymentAgentLoginId = null;
+    private ?string $paymentAgentToken = null;
+
     /** @var object[] */
     private array $recordedEvents = [];
 
@@ -59,11 +63,9 @@ final class WithdrawalTransaction
         ?float $lockedExchangeRate = null
     ): self {
         $tx = new self($id, $userId, $amountUsd, $idempotencyKey);
-
         if ($lockedExchangeRate !== null) {
             $tx->exchangeRate = $lockedExchangeRate;
         }
-
         $tx->raise(new TransactionCreated(
             transactionId: $tx->id,
             userId: $userId,
@@ -72,16 +74,32 @@ final class WithdrawalTransaction
             idempotencyKey: $idempotencyKey,
             occurredAt: new \DateTimeImmutable()
         ));
-
         return $tx;
     }
 
-    // ========== DOMAIN BEHAVIOR ==========
+    public function attachPaymentAgentCredentials(string $loginId, ?string $token = null): void
+    {
+        $this->ensurePending();
+
+        if ($this->paymentAgentLoginId !== null) {
+            return; // idempotent
+        }
+
+        if (trim($loginId) === '') {
+            throw new InvalidArgumentException('paymentAgentLoginId cannot be empty');
+        }
+
+        $this->paymentAgentLoginId = $loginId;
+        $this->paymentAgentToken = $token;
+    }
+
+    public function paymentAgentLoginId(): ?string { return $this->paymentAgentLoginId; }
+    public function paymentAgentToken(): ?string { return $this->paymentAgentToken; }
 
     private function ensurePending(): void
     {
         if (!$this->status->isPending()) {
-            throw new LogicException("Transaction {$this->id} is not pending (current: {$this->status->value})");
+            throw new LogicException("Transaction {$this->id} is not pending");
         }
     }
 
@@ -92,13 +110,16 @@ final class WithdrawalTransaction
         array $rawResponse = []
     ): void {
         $this->ensurePending();
-
         if ($this->derivWithdrawal !== null) {
-            return; 
+            return;
         }
-
         $this->derivWithdrawal = new DerivWithdrawal($derivTransferId, $derivTxnId, $executedAt, $rawResponse);
-        // Status remains PENDING — completion only after M-Pesa
+    }
+
+    // ADD THIS METHOD
+    public function hasDerivDebit(): bool
+    {
+        return $this->derivWithdrawal !== null;
     }
 
     public function recordMpesaDisbursement(
@@ -109,23 +130,14 @@ final class WithdrawalTransaction
         array $rawResponse = []
     ): void {
         $this->ensurePending();
-
         if ($this->mpesaDisbursement !== null) {
-            return; 
+            return;
         }
-
         if (!$amountKes->currency->isKes()) {
             throw new InvalidArgumentException('M-Pesa disbursement must be in KES');
         }
 
-        $this->mpesaDisbursement = new MpesaDisbursement(
-            $mpesaReceipt,
-            $resultCode,
-            $executedAt,
-            $amountKes,
-            $rawResponse
-        );
-
+        $this->mpesaDisbursement = new MpesaDisbursement($mpesaReceipt, $resultCode, $executedAt, $amountKes, $rawResponse);
         $this->amountKes = $amountKes;
         $this->status = TransactionStatus::COMPLETED;
 
@@ -142,9 +154,7 @@ final class WithdrawalTransaction
         if ($this->status->isTerminal()) {  
             return;
         }
-
         $this->status = TransactionStatus::FAILED;
-
         $this->raise(new TransactionFailed(
             transactionId: $this->id,
             reason: $reason,
@@ -153,25 +163,12 @@ final class WithdrawalTransaction
         ));
     }
 
-    // ========== QUERIES ==========
-
     public function isFinalized(): bool
     {
         return $this->status->isCompleted() || $this->status->isFailed();
     }
 
-    public function hasDerivDebit(): bool
-    {
-        return $this->derivWithdrawal !== null;
-    }
-
-    public function hasMpesaDisbursement(): bool
-    {
-        return $this->mpesaDisbursement !== null;
-    }
-
-    // ========== GETTERS ==========
-
+    // Getters...
     public function id(): TransactionId { return $this->id; }
     public function userId(): string { return $this->userId; }
     public function type(): TransactionType { return $this->type; }
@@ -183,14 +180,11 @@ final class WithdrawalTransaction
     public function derivWithdrawal(): ?DerivWithdrawal { return $this->derivWithdrawal; }
     public function mpesaDisbursement(): ?MpesaDisbursement { return $this->mpesaDisbursement; }
 
-    // ========== EVENT SOURCING ==========
-
     private function raise(object $event): void
     {
         $this->recordedEvents[] = $event;
     }
 
-    /** @return object[] */
     public function releaseEvents(): array
     {
         $events = $this->recordedEvents;
