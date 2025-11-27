@@ -18,28 +18,32 @@ final class MpesaB2CResult
         return new self(true, $receipt, $resultCode, null, $raw);
     }
 
-    public static function failure(string $error, array $raw): self
+    public static function failure(string $error, array $raw, ?int $resultCode = null): self
     {
-        return new self(false, null, null, $error, $raw);
+        return new self(false, null, $resultCode, $error, $raw);
     }
-
 
     public static function fromMpesaResponse(array $response): self
     {
-        $resultCode = $response['ResultCode'] ?? null;
-        
-        if ($resultCode === 0) {
-            return self::success(
-                $response['TransactionReceipt'] ?? $response['ConversationID'] ?? 'UNKNOWN',
-                $resultCode,
-                $response
-            );
+        if (isset($response['ResponseCode'])) {
+            $responseCode = $response['ResponseCode'];
+            
+            // B2C API returns string codes like '0', '1', etc.
+            if ($responseCode === '0' || $responseCode === 0) {
+                $receipt = $response['TransactionReceipt'] 
+                    ?? $response['TransactionID'] 
+                    ?? $response['ConversationID'] 
+                    ?? 'UNKNOWN';
+                    
+                return self::success((string)$receipt, (int)$responseCode, $response);
+            }
+            
+            $errorMessage = $response['ResponseDescription'] ?? 'Unknown M-Pesa error';
+            return self::failure($errorMessage, $response, (int)$responseCode);
         }
         
-        return self::failure(
-            $response['ResultDesc'] ?? 'Unknown M-Pesa error',
-            $response
-        );
+        // Fallback for unexpected format
+        return self::failure('Invalid M-Pesa response format', $response);
     }
 
     public function isSuccess(): bool { return $this->success; }
