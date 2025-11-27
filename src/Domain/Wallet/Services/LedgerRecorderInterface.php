@@ -16,4 +16,11 @@ interface LedgerRecorderInterface
         Money $amountKes,
         LockedRate $lockedRate
     ): void;
+
+    public function recordWithdrawalInitiated(
+        string $userId,
+        TransactionId $transactionId,
+        Money $amountUsd,
+        LockedRate $lockedRate
+    ): void;
 }

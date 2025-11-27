@@ -7,9 +7,6 @@ use PenPay\Domain\Wallet\ValueObject\Money;
 
 interface DailyLimitCheckerInterface
 {
-    /**
-     * Determines whether the user can deposit the given amount
-     * according to daily limits defined in the domain.
-     */
     public function canDeposit(string $userId, Money $amount): bool;
+    public function canWithdraw(string $userId, Money $amount): bool;
 }

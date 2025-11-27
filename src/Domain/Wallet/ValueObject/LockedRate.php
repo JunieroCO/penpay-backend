@@ -9,19 +9,40 @@ use InvalidArgumentException;
 final readonly class LockedRate
 {
     public function __construct(
-        public float $rate,                    // e.g. 145.50
+        public float $rate,
         public Currency $from,
         public Currency $to,
-        public DateTimeImmutable $lockedAt
+        public DateTimeImmutable $lockedAt,
+        public DateTimeImmutable $expiresAt,
     ) {
         if ($rate <= 0) {
             throw new InvalidArgumentException('FX rate must be positive');
         }
+        if ($expiresAt <= $lockedAt) {
+            throw new InvalidArgumentException('Expiry must be after lock time');
+        }
     }
 
-    public static function lock(float $rate, Currency $from = Currency::USD, Currency $to = Currency::KES): self
+    public static function lock(
+        float $rate,
+        Currency $from = Currency::USD,
+        Currency $to = Currency::KES,
+        ?DateTimeImmutable $expiresAt = null
+    ): self {
+        $lockedAt = new DateTimeImmutable();
+        $expiresAt ??= (clone $lockedAt)->modify('+15 minutes');
+        return new self($rate, $from, $to, $lockedAt, $expiresAt);
+    }
+
+    // REQUIRED METHODS — FOR ORCHESTRATOR
+    public function rate(): float
     {
-        return new self($rate, $from, $to, new DateTimeImmutable());
+        return $this->rate;
+    }
+
+    public function expiresAt(): DateTimeImmutable
+    {
+        return $this->expiresAt;
     }
 
     public function convert(Money $fromAmount): Money
@@ -29,18 +50,17 @@ final readonly class LockedRate
         if ($fromAmount->currency !== $this->from) {
             throw new InvalidArgumentException("Expected {$this->from->value}, got {$fromAmount->currency->value}");
         }
-
-        $decimal = $fromAmount->toDecimal() * $this->rate;
-        return Money::fromDecimal($decimal, $this->to);
+        return Money::fromDecimal($fromAmount->toDecimal() * $this->rate, $this->to);
     }
 
     public function toArray(): array
     {
         return [
-            'rate' => $this->rate,
-            'from' => $this->from->value,
-            'to' => $this->to->value,
-            'locked_at' => $this->lockedAt->format('Y-m-d H:i:s.u')
+            'rate'       => $this->rate,
+            'from'       => $this->from->value,
+            'to'         => $this->to->value,
+            'locked_at'  => $this->lockedAt->format('c'),
+            'expires_at' => $this->expiresAt->format('c'),
         ];
     }
 }
