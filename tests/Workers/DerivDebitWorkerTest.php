@@ -17,6 +17,7 @@ use PenPay\Infrastructure\Deriv\DerivGatewayInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Infrastructure\Secret\OneTimeSecretStoreInterface;
 use PenPay\Domain\Payments\Entity\DerivTransferResult;
+use PenPay\Domain\Payments\ValueObject\TransactionStatus;
 
 final class DerivDebitWorkerTest extends TestCase
 {
@@ -116,7 +117,6 @@ final class DerivDebitWorkerTest extends TestCase
             'secret_key'     => 'secret-key-1',
         ]);
 
-        // FIX: Use derivWithdrawal() method instead of hasDerivDebit()
         $this->assertNotNull($tx->derivWithdrawal());
     }
 
@@ -152,7 +152,8 @@ final class DerivDebitWorkerTest extends TestCase
         ]);
 
         $this->assertTrue($tx->isFinalized());
-        $this->assertEquals('FAILED', $tx->status()->value);
+        // FIX 1: Compare enum instances directly
+        $this->assertSame(TransactionStatus::FAILED, $tx->status());
     }
 
     /** @test */
@@ -189,6 +190,8 @@ final class DerivDebitWorkerTest extends TestCase
         ]);
 
         $this->assertTrue($tx->isFinalized());
+        // FIX 2: Compare enum instances directly
+        $this->assertSame(TransactionStatus::FAILED, $tx->status());
     }
 
     /** @test */
@@ -232,8 +235,10 @@ final class DerivDebitWorkerTest extends TestCase
             'secret_key'     => 'foo',
         ]);
 
-        $this->assertEquals('FAILED', $tx->status()->value);
+        // FIX 3: Compare enum instances directly
+        $this->assertSame(TransactionStatus::FAILED, $tx->status());
     }
+
     /** @test */
     public function record_deriv_debit_attaches_entity_but_keeps_pending(): void
     {
@@ -246,8 +251,8 @@ final class DerivDebitWorkerTest extends TestCase
             rawResponse: ['success' => true]
         );
 
-        // Use derivWithdrawal() instead of hasDerivDebit()
         $this->assertNotNull($tx->derivWithdrawal());
-        $this->assertEquals('PENDING', $tx->status()->value);
+        // FIX 4: Compare enum instances directly
+        $this->assertSame(TransactionStatus::PENDING, $tx->status());
     }
 }
