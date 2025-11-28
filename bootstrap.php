@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 use DI\ContainerBuilder;
@@ -18,8 +17,14 @@ $containerBuilder->addDefinitions([
     ],
     'config.redis' => [
         'host' => getenv('REDIS_HOST'),
-        'port' => getenv('REDIS_PORT'),
-    ]
+        'port' => getenv('REDIS_PORT') ?: 6379,
+    ],
+    // ADD THIS — THE EMPIRE'S FINAL COMMAND
+    'config.deriv' => [
+        'app_id' => getenv('DERIV_APP_ID') ?: '1089',
+        'ws_url' => 'wss://ws.binaryws.com/websockets/v3?app_id=' . (getenv('DERIV_APP_ID') ?: '1089'),
+        'payment_agent_token' => getenv('DERIV_PAYMENT_AGENT_TOKEN'),
+    ],
 ]);
 
 // Enable autowiring (safe in PHP-DI v7)
