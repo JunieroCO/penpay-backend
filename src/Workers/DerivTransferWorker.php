@@ -5,12 +5,14 @@ namespace PenPay\Workers;
 
 use PenPay\Domain\Payments\Aggregate\Transaction;
 use PenPay\Domain\Payments\Entity\DerivTransfer;
+use PenPay\Domain\Payments\Entity\DerivTransferResult;
 use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
-use PenPay\Infrastructure\Deriv\DerivGatewayInterface;
+use PenPay\Infrastructure\Deriv\Deposit\DerivDepositGatewayInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use Psr\Log\LoggerInterface;
+use React\EventLoop\LoopInterface;
 use Throwable;
 use DateTimeImmutable;
 
@@ -35,9 +37,10 @@ final class DerivTransferWorker
 
     public function __construct(
         private readonly TransactionRepositoryInterface $txRepo,
-        private readonly DerivGatewayInterface $derivGateway,
+        private readonly DerivDepositGatewayInterface $derivGateway,
         private readonly RedisStreamPublisherInterface $publisher,
         private readonly LoggerInterface $logger,
+        private readonly LoopInterface $loop,
     ) {}
 
     /**
@@ -56,10 +59,12 @@ final class DerivTransferWorker
             return;
         }
 
-        $transaction = $this->txRepo->getById($txId);
-        if (!$transaction) {
-            $this->logger->error('DerivTransferWorker: transaction not found', [
+        try {
+            $transaction = $this->txRepo->getById($txId);
+        } catch (Throwable $e) {
+            $this->logger->error('DerivTransferWorker: failed to load transaction', [
                 'transaction_id' => (string)$txId,
+                'error' => $e->getMessage()
             ]);
             return;
         }
@@ -102,7 +107,7 @@ final class DerivTransferWorker
                     'login_id' => $transaction->userDerivLoginId(),
                 ]);
 
-                $result = $this->derivGateway->paymentAgentDeposit(
+                $promise = $this->derivGateway->deposit(
                     loginId: $transaction->userDerivLoginId(),
                     amountUsd: $transaction->amountUsd(),
                     paymentAgentToken: $transaction->paymentAgentToken(),
@@ -113,13 +118,39 @@ final class DerivTransferWorker
                     ]
                 );
 
+                // Wait for promise to resolve
+                $result = null;
+                $error = null;
+
+                $promise->then(
+                    function (DerivTransferResult $res) use (&$result) {
+                        $result = $res;
+                        $this->loop->stop();
+                    },
+                    function (Throwable $e) use (&$error) {
+                        $error = $e;
+                        $this->loop->stop();
+                    }
+                );
+
+                $this->loop->run();
+
+                if ($error !== null) {
+                    throw $error;
+                }
+
+                if ($result === null) {
+                    throw new \RuntimeException('No result received from Deriv gateway');
+                }
+
                 if ($result->isSuccess()) {
-                    $this->completeTransaction($transaction, $result);
+                    $this->completeTransaction($transaction, $result, $payload);
                     return;
                 }
 
                 $lastError = new \RuntimeException($result->errorMessage() ?? 'Deriv returned failure');
                 throw $lastError;
+
             } catch (Throwable $e) {
                 $lastError = $e;
                 $this->logger->warning('DerivTransferWorker: attempt failed', [
@@ -162,7 +193,7 @@ final class DerivTransferWorker
         }
     }
 
-    private function completeTransaction(Transaction $tx, object $result): void
+    private function completeTransaction(Transaction $tx, DerivTransferResult $result, array $payload): void
     {
         try {
             $derivTransfer = DerivTransfer::success(

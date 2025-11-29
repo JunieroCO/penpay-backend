@@ -6,21 +6,24 @@ namespace PenPay\Workers;
 use PenPay\Domain\Payments\Aggregate\WithdrawalTransaction;
 use PenPay\Domain\Payments\Repository\WithdrawalTransactionRepositoryInterface; 
 use PenPay\Domain\Shared\Kernel\TransactionId;
-use PenPay\Infrastructure\Deriv\DerivGatewayInterface;
+use PenPay\Infrastructure\Deriv\Withdrawal\DerivWithdrawalGatewayInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Infrastructure\Secret\OneTimeSecretStoreInterface;
+use PenPay\Domain\Payments\Entity\DerivWithdrawalResult;
 use Psr\Log\LoggerInterface;
 use DateTimeImmutable;
 use RuntimeException;
+use React\EventLoop\LoopInterface;
 
 final class DerivDebitWorker
 {
     public function __construct(
         private readonly WithdrawalTransactionRepositoryInterface $txRepo, 
-        private readonly DerivGatewayInterface $derivGateway,
+        private readonly DerivWithdrawalGatewayInterface $derivGateway,
         private readonly OneTimeSecretStoreInterface $secretStore,
         private readonly RedisStreamPublisherInterface $publisher,
         private readonly LoggerInterface $logger,
+        private readonly LoopInterface $loop,
         private readonly int $maxRetries = 3
     ) {}
 
@@ -42,9 +45,13 @@ final class DerivDebitWorker
             return;
         }
 
-        $tx = $this->txRepo->getById($txId);
-        if (!$tx instanceof WithdrawalTransaction) {
-            $this->logger->warning('DerivDebitWorker: transaction not found or wrong type', ['transaction_id' => (string)$txId]);
+        try {
+            $tx = $this->txRepo->getById($txId);
+        } catch (\Throwable $e) {
+            $this->logger->error('DerivDebitWorker: failed to load transaction', [
+                'transaction_id' => (string)$txId,
+                'error' => $e->getMessage()
+            ]);
             return;
         }
 
@@ -56,7 +63,6 @@ final class DerivDebitWorker
 
         // Payment agent credentials
         $paLogin = $tx->paymentAgentLoginId();
-        $paToken = $tx->paymentAgentToken();
 
         if ($paLogin === null) {
             $this->failAndPublish($tx, 'missing_deriv_payment_agent_credentials', 'PA login not attached');
@@ -85,21 +91,46 @@ final class DerivDebitWorker
                 'pa_login' => $paLogin
             ]);
 
-            $result = $this->derivGateway->paymentAgentWithdraw(
+            $promise = $this->derivGateway->withdraw(
                 loginId: $paLogin,
                 amountUsd: $amountUsd,
                 verificationCode: $verificationCode,
                 reference: (string)$txId
             );
 
-            if (!$result->success) {
-                $this->failAndPublish($tx, 'deriv_withdraw_failed', $result->errorMessage ?? 'Unknown error');
+            // Wait for promise to resolve
+            $result = null;
+            $error = null;
+
+            $promise->then(
+                function (DerivWithdrawalResult $res) use (&$result) {
+                    $result = $res;
+                    $this->loop->stop();
+                },
+                function (\Throwable $e) use (&$error) {
+                    $error = $e;
+                    $this->loop->stop();
+                }
+            );
+
+            $this->loop->run();
+
+            if ($error !== null) {
+                throw $error;
+            }
+
+            if ($result === null) {
+                throw new RuntimeException('No result received from gateway');
+            }
+
+            if (!$result->isSuccess()) {
+                $this->failAndPublish($tx, 'deriv_withdraw_failed', $result->errorMessage() ?? 'Unknown error');
                 return;
             }
 
             $tx->recordDerivDebit(
-                derivTransferId: $result->transferId,
-                derivTxnId: $result->txnId,
+                derivTransferId: $result->transferId(),
+                derivTxnId: $result->txnId(),
                 executedAt: new DateTimeImmutable(),
                 rawResponse: $result->raw()
             );
