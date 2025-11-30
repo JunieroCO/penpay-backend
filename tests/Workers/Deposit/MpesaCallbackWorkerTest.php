@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace PenPay\Tests\Workers;
+namespace PenPay\Tests\Workers\Deposit;
 
 use PHPUnit\Framework\TestCase;
 

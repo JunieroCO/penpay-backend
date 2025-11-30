@@ -13,8 +13,8 @@ use Psr\Http\Message\StreamInterface;
 use Psr\SimpleCache\CacheInterface;  
 use GuzzleHttp\Psr7\Response;
 use Psr\Log\LoggerInterface;
-use PenPay\Infrastructure\Mpesa\MpesaGateway;
-use PenPay\Infrastructure\Mpesa\MpesaB2CResult;
+use PenPay\Infrastructure\Mpesa\Withdrawal\MpesaGateway;
+use PenPay\Infrastructure\Mpesa\Withdrawal\MpesaB2CResult;
 
 final class MpesaGatewayTest extends TestCase
 {

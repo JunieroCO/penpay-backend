@@ -1,13 +1,13 @@
 <?php
 declare(strict_types=1);
 
-namespace Tests\Workers;
+namespace Tests\Workers\Deposit;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\MockObject\MockObject;
-use PenPay\Workers\DepositWorker;
+use PenPay\Workers\Deposit\DepositWorker;
 use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
-use PenPay\Infrastructure\Mpesa\MpesaClientInterface;
+use PenPay\Infrastructure\Mpesa\Deposit\MpesaClientInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Domain\Payments\Aggregate\Transaction;
 use PenPay\Domain\Payments\ValueObject\IdempotencyKey;

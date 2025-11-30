@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Workers;
+namespace PenPay\Workers\Deposit;
 
 use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;

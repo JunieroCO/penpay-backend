@@ -1,14 +1,14 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Tests\Workers;
+namespace PenPay\Tests\Workers\Withdrawal;
 
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\MockObject\MockObject;
 use Psr\Log\LoggerInterface;
 use React\EventLoop\LoopInterface;
-use PenPay\Workers\DerivDebitWorker;
+use PenPay\Workers\Withdrawal\DerivDebitWorker;
 use PenPay\Domain\Payments\Aggregate\WithdrawalTransaction;
 use PenPay\Domain\Payments\Repository\WithdrawalTransactionRepositoryInterface;
 use PenPay\Domain\Payments\ValueObject\IdempotencyKey;

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Tests\Workers;
+namespace PenPay\Tests\Workers\Deposit;
 
 use DateTimeImmutable;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -16,7 +16,7 @@ use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
 use PenPay\Infrastructure\Deriv\Deposit\DerivDepositGatewayInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
-use PenPay\Workers\DerivTransferWorker;
+use PenPay\Workers\Deposit\DerivTransferWorker;
 use Psr\Log\LoggerInterface;
 use React\EventLoop\LoopInterface;
 use React\Promise\Promise;

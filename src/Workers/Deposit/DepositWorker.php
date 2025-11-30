@@ -1,10 +1,10 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Workers;
+namespace PenPay\Workers\Deposit;
 
 use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
-use PenPay\Infrastructure\Mpesa\MpesaClientInterface;
+use PenPay\Infrastructure\Mpesa\Deposit\MpesaClientInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Domain\Payments\Entity\MpesaRequest;
 use PenPay\Domain\Shared\Kernel\TransactionId;

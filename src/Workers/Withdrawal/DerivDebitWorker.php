@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Workers;
+namespace PenPay\Workers\Withdrawal;
 
 use PenPay\Domain\Payments\Aggregate\WithdrawalTransaction;
 use PenPay\Domain\Payments\Repository\WithdrawalTransactionRepositoryInterface; 

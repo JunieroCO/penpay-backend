@@ -1,22 +1,22 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Tests\Workers;
+namespace PenPay\Tests\Workers\Withdrawal;
 
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\MockObject\MockObject;
 use Psr\Log\LoggerInterface;
 
-use PenPay\Workers\MpesaDisbursementWorker;
+use PenPay\Workers\Withdrawal\MpesaDisbursementWorker;
 use PenPay\Domain\Payments\Aggregate\WithdrawalTransaction;
 use PenPay\Domain\Payments\Repository\WithdrawalTransactionRepositoryInterface;
 use PenPay\Domain\Payments\ValueObject\IdempotencyKey;
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
 
-use PenPay\Infrastructure\Mpesa\MpesaGatewayInterface;
-use PenPay\Infrastructure\Mpesa\MpesaB2CResult;
+use PenPay\Infrastructure\Mpesa\Withdrawal\MpesaGatewayInterface;
+use PenPay\Infrastructure\Mpesa\Withdrawal\MpesaB2CResult;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 
 final class MpesaDisbursementWorkerTest extends TestCase

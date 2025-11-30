@@ -1,13 +1,13 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Workers;
+namespace PenPay\Workers\Withdrawal;
 
 use PenPay\Domain\Payments\Aggregate\WithdrawalTransaction;
 use PenPay\Domain\Payments\Repository\WithdrawalTransactionRepositoryInterface;
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
-use PenPay\Infrastructure\Mpesa\MpesaGatewayInterface;
+use PenPay\Infrastructure\Mpesa\Withdrawal\MpesaGatewayInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use Psr\Log\LoggerInterface;
 use DateTimeImmutable;

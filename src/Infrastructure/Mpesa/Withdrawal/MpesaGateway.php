@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace PenPay\Infrastructure\Mpesa;
+namespace PenPay\Infrastructure\Mpesa\Withdrawal;
 
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
