@@ -1,32 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
-         bootstrap="vendor/autoload.php"
+         bootstrap="tests/bootstrap.php"
          colors="true"
          cacheResult="false">
-
     <testsuites>
         <testsuite name="PenPay Test Suite">
             <directory>tests</directory>
         </testsuite>
     </testsuites>
-
     <logging>
         <junit outputFile="build/reports/tests/junit.xml"/>
     </logging>
-
     <source>
         <include>
             <directory suffix=".php">src</directory>
         </include>
     </source>
-
     <php>
         <env name="APP_ENV" value="testing"/>
         <env name="DB_HOST" value="127.0.0.1"/>
         <env name="DB_PORT" value="3307"/>
         <env name="DB_DATABASE" value="penpay_test"/>
-        <env name="DB_USERNAME" value="root"/>
-        <env name="DB_PASSWORD" value=""/>
+        <env name="DB_USERNAME" value="penpay"/>
+        <env name="DB_PASSWORD" value="secret"/>
+        <!-- Set to 'true' to verify DB connection during bootstrap -->
+        <!-- <env name="VERIFY_DB_CONNECTION" value="true"/> -->
     </php>
 </phpunit>

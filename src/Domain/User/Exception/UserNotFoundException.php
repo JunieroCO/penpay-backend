@@ -26,4 +26,8 @@ final class UserNotFoundException extends RuntimeException
     {
         return new self("User with email {$email} not found");
     }
+    public static function withDerivUserId(int $derivUserId): self
+    {
+        return new self("User with Deriv user ID {$derivUserId} not found");
+    }
 }

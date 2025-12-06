@@ -13,15 +13,16 @@ abstract class Migration
     public function __construct()
     {
         $dsn = sprintf(
-            'mysql:host=%s;dbname=%s;charset=utf8mb4',
-            $_ENV['DB_HOST'] ?? '127.0.0.1',
-            $_ENV['DB_NAME']
+            'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',  
+            $_ENV['DB_HOST'] ?? 'mysql',
+            $_ENV['DB_PORT'] ?? '3306',  
+            $_ENV['DB_NAME'] ?? 'penpay'
         );
 
         $this->pdo = new PDO(
             $dsn,
-            $_ENV['DB_USER'],
-            $_ENV['DB_PASS'],
+            $_ENV['DB_USER'] ?? 'penpay',
+            $_ENV['DB_PASS'] ?? 'secret',
             [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,

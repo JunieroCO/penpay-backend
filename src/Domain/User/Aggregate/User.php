@@ -127,11 +127,33 @@ final class User extends AggregateRoot
         return new ArrayCollection($this->devices);
     }
 
-    // Immutable getters
-    public function id(): UserId { return $this->id; }
-    public function email(): Email { return $this->email; }
-    public function phone(): PhoneNumber { return $this->phone; }
-    public function derivLoginId(): DerivLoginId { return $this->derivLoginId; }
-    public function kyc(): KycSnapshot { return $this->kyc; }
-    public function passwordHash(): PasswordHash { return $this->passwordHash; }
+    public static function reconstitute(
+        UserId $id,
+        Email $email,
+        PhoneNumber $phone,
+        DerivLoginId $derivLoginId,
+        KycSnapshot $kyc,
+        PasswordHash $passwordHash,
+        array $devices = []
+    ): self {
+        $user = new self(
+            id: $id,
+            email: $email,
+            phone: $phone,
+            derivLoginId: $derivLoginId,
+            kyc: $kyc,
+            passwordHash: $passwordHash,
+            devices: $devices,
+        );
+
+        return $user;
+    }
+
+// Immutable getters
+public function id(): UserId { return $this->id; }
+public function email(): Email { return $this->email; }
+public function phone(): PhoneNumber { return $this->phone; }
+public function derivLoginId(): DerivLoginId { return $this->derivLoginId; }
+public function kyc(): KycSnapshot { return $this->kyc; }
+public function passwordHash(): PasswordHash { return $this->passwordHash; }
 }

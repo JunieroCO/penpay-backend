@@ -7,7 +7,7 @@ use InvalidArgumentException;
 
 final readonly class KycSnapshot
 {
-    private function __construct(
+    public function __construct(
         public string $firstName,
         public string $lastName,
         public string $email,
