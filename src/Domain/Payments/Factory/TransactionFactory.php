@@ -91,6 +91,7 @@ final class TransactionFactory implements TransactionFactoryInterface
         int $amountUsdCents,
         LockedRate $lockedRate,
         string $userDerivLoginId,
+        string $withdrawalVerificationCode,
         ?IdempotencyKey $idempotencyKey = null
     ): Transaction {
         if ($amountUsdCents <= 0) {
@@ -107,7 +108,8 @@ final class TransactionFactory implements TransactionFactoryInterface
             $moneyUsd,
             $lockedRate,
             $idempotencyKey,
-            $userDerivLoginId
+            $userDerivLoginId,
+            $withdrawalVerificationCode
         );
     }
 
@@ -116,6 +118,7 @@ final class TransactionFactory implements TransactionFactoryInterface
         string $amountUsd,
         LockedRate $lockedRate,
         string $userDerivLoginId,
+        string $withdrawalVerificationCode,
         ?IdempotencyKey $idempotencyKey = null
     ): Transaction {
         $cents = $this->parseCurrencyString($amountUsd);
@@ -125,6 +128,7 @@ final class TransactionFactory implements TransactionFactoryInterface
             $cents,
             $lockedRate,
             $userDerivLoginId,
+            $withdrawalVerificationCode,
             $idempotencyKey
         );
     }
@@ -137,6 +141,7 @@ final class TransactionFactory implements TransactionFactoryInterface
         float $amountUsd,
         LockedRate $lockedRate,
         string $userDerivLoginId,
+        string $withdrawalVerificationCode,
         ?IdempotencyKey $idempotencyKey = null
     ): Transaction {
         trigger_error(
@@ -151,6 +156,7 @@ final class TransactionFactory implements TransactionFactoryInterface
             $cents,
             $lockedRate,
             $userDerivLoginId,
+            $withdrawalVerificationCode,
             $idempotencyKey
         );
     }

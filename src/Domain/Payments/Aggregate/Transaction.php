@@ -398,19 +398,12 @@ final class Transaction
                 completedAt: new \DateTimeImmutable()
             ));
         }
-        // If disbursement fails, transaction stays in AWAITING_MPESA_DISBURSEMENT
-        // and can be retried or failed manually
     }
 
     // ===================================================================
     // FAILURE & REVERSAL
     // ===================================================================
 
-    /**
-     * Mark transaction as failed
-     * 
-     * @throws DomainException if already in terminal state
-     */
     public function fail(string $reason, ?string $providerError = null): void
     {
         if ($this->status->isTerminal()) {
@@ -430,11 +423,6 @@ final class Transaction
         ));
     }
 
-    /**
-     * Reverse a completed transaction (admin only)
-     * 
-     * @throws DomainException if not completed
-     */
     public function reverse(string $reason): void
     {
         if (!$this->status->isCompleted()) {
@@ -450,17 +438,11 @@ final class Transaction
     // RETRY LOGIC
     // ===================================================================
 
-    /**
-     * Increment retry counter
-     */
     public function incrementRetryCount(): void
     {
         $this->retryCount++;
     }
 
-    /**
-     * Check if transaction can be retried
-     */
     public function canRetry(int $maxRetries = 3): bool
     {
         return $this->retryCount < $maxRetries && !$this->isFinalized();
@@ -470,49 +452,31 @@ final class Transaction
     // GUARDS & QUERIES
     // ===================================================================
 
-    /**
-     * Check if transaction is in terminal state
-     */
     public function isFinalized(): bool
     {
         return $this->status->isTerminal();
     }
 
-    /**
-     * Check if M-Pesa callback has been received
-     */
     public function hasMpesaCallback(): bool
     {
         return $this->mpesaRequest !== null && $this->mpesaRequest->isCallbackReceived();
     }
 
-    /**
-     * Check if Deriv transfer has been executed
-     */
     public function hasDerivTransfer(): bool
     {
         return $this->derivTransfer !== null;
     }
 
-    /**
-     * Check if M-Pesa disbursement has been recorded
-     */
     public function hasMpesaDisbursement(): bool
     {
         return $this->mpesaDisbursement !== null;
     }
 
-    /**
-     * Check if transaction has Deriv login ID
-     */
     public function hasDerivLoginId(): bool
     {
         return $this->userDerivLoginId !== null;
     }
 
-    /**
-     * Check if this transaction matches the idempotency key
-     */
     public function hasIdempotencyKey(IdempotencyKey $key): bool
     {
         return $this->idempotencyKey->equals($key);
@@ -543,11 +507,6 @@ final class Transaction
     // DOMAIN EVENTS
     // ===================================================================
 
-    /**
-     * Release and clear all recorded domain events
-     * 
-     * @return object[]
-     */
     public function releaseEvents(): array
     {
         $events = $this->recordedEvents;
@@ -555,11 +514,51 @@ final class Transaction
         return $events;
     }
 
-    /**
-     * Record a domain event
-     */
     private function raise(object $event): void
     {
         $this->recordedEvents[] = $event;
+    }
+
+    public static function reconstitute(
+        TransactionId $id,
+        string $userId,
+        TransactionType $type,
+        TransactionStatus $status,
+        Money $amountUsd,
+        Money $amountKes,
+        LockedRate $lockedRate,
+        IdempotencyKey $idempotencyKey,
+        ?MpesaRequest $mpesaRequest = null,
+        ?DerivTransfer $derivTransfer = null,
+        ?MpesaDisbursement $mpesaDisbursement = null,
+        ?string $userDerivLoginId = null,
+        ?string $withdrawalVerificationCode = null,
+        ?string $failureReason = null,
+        ?string $providerError = null,
+        int $retryCount = 0
+    ): self {
+        $tx = new self(
+            id: $id,
+            userId: $userId,
+            type: $type,
+            amountUsd: $amountUsd,
+            amountKes: $amountKes,
+            lockedRate: $lockedRate,
+            idempotencyKey: $idempotencyKey
+        );
+
+        $tx->recordedEvents = [];
+
+        $tx->status = $status;
+        $tx->mpesaRequest = $mpesaRequest;
+        $tx->derivTransfer = $derivTransfer;
+        $tx->mpesaDisbursement = $mpesaDisbursement;
+        $tx->userDerivLoginId = $userDerivLoginId;
+        $tx->withdrawalVerificationCode = $withdrawalVerificationCode;
+        $tx->failureReason = $failureReason;
+        $tx->providerError = $providerError;
+        $tx->retryCount = $retryCount;
+
+        return $tx;
     }
 }
