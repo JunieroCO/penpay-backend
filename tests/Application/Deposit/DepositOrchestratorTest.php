@@ -60,11 +60,13 @@ final class DepositOrchestratorTest extends TestCase
     {
         $userId = UserId::generate();
         $command = DepositRequestDTO::fromArray([
-            'user_id'         => (string) $userId,
-            'amount_usd'      => 100.00,
-            'device_id'       => 'test-device',
-            'idempotency_key' => 'test-idem-123'
+            'user_id'             => (string) $userId,
+            'amount_usd'          => 100.00,
+            'user_deriv_login_id' => 'CR1234567', 
+            'device_id'           => 'test-device',
+            'idempotency_key'     => 'test-idem-123'
         ]);
+
 
         $lockedRate = $this->createLockedRate(130.50);
         $transaction = $this->createTransactionMock();
@@ -94,6 +96,7 @@ final class DepositOrchestratorTest extends TestCase
                 (string) $userId,
                 100.0,
                 $lockedRate,
+                'CR1234567',
                 $this->isInstanceOf(IdempotencyKey::class)
             )
             ->willReturn($transaction);
@@ -122,23 +125,24 @@ final class DepositOrchestratorTest extends TestCase
                 $this->callback(function (array $payload) {
                     return isset($payload['transaction_id']) 
                         && isset($payload['user_id'])
-                        && isset($payload['amount_usd']);
+                        && isset($payload['amount_usd_cents']);
                 })
             );
 
         $result = $this->orchestrator->execute($command);
 
         $this->assertInstanceOf(Transaction::class, $result);
-        $this->assertEquals($transaction->getId(), $result->getId());
+        $this->assertEquals($transaction->id(), $result->id());
     }
 
     public function test_idempotent_deposit_returns_existing_transaction(): void
     {
         $userId = UserId::generate();
         $command = DepositRequestDTO::fromArray([
-            'user_id'         => (string) $userId,
-            'amount_usd'      => 50.0,
-            'idempotency_key' => 'idem-repeat-001'
+            'user_id'             => (string) $userId,
+            'amount_usd'          => 50.0,
+            'user_deriv_login_id' => 'CR1234567',
+            'idempotency_key'     => 'idem-repeat-001'
         ]);
 
         $existingTx = $this->createTransactionMock();
@@ -160,7 +164,7 @@ final class DepositOrchestratorTest extends TestCase
         $result = $this->orchestrator->execute($command);
 
         $this->assertInstanceOf(Transaction::class, $result);
-        $this->assertEquals($existingTx->getId(), $result->getId());
+        $this->assertEquals($existingTx->id(), $result->id());
     }
 
     public function test_daily_limit_exceeded_throws_exception(): void
@@ -169,6 +173,7 @@ final class DepositOrchestratorTest extends TestCase
         $command = DepositRequestDTO::fromArray([
             'user_id'         => (string) $userId,
             'amount_usd'      => 999999.0,
+            'user_deriv_login_id' => 'CR1234567',
             'idempotency_key' => 'test-idem-limit'
         ]);
 
@@ -202,6 +207,7 @@ final class DepositOrchestratorTest extends TestCase
         $command = DepositRequestDTO::fromArray([
             'user_id'         => (string) $userId,
             'amount_usd'      => 100.00,
+            'user_deriv_login_id' => 'CR1234567',
             'idempotency_key' => 'test-idem-fx-fail'
         ]);
 
@@ -238,6 +244,7 @@ final class DepositOrchestratorTest extends TestCase
         $command = DepositRequestDTO::fromArray([
             'user_id'         => (string) $userId,
             'amount_usd'      => 100.00,
+            'user_deriv_login_id' => 'CR1234567',
             'idempotency_key' => 'test-idem-factory-fail'
         ]);
 
@@ -259,6 +266,13 @@ final class DepositOrchestratorTest extends TestCase
         // Factory fails to create transaction
         $this->txFactory->expects($this->once())
             ->method('createDepositTransaction')
+            ->with(
+                (string) $userId,
+                100.0,
+                $lockedRate,
+                'CR1234567', 
+                $this->isInstanceOf(IdempotencyKey::class)
+            )
             ->willThrowException(new RuntimeException('Invalid transaction data'));
 
         // Nothing should be persisted or published
@@ -278,6 +292,7 @@ final class DepositOrchestratorTest extends TestCase
         $command = DepositRequestDTO::fromArray([
             'user_id'         => (string) $userId,
             'amount_usd'      => 100.00,
+            'user_deriv_login_id' => 'CR1234567',
             'idempotency_key' => 'test-idem-save-fail'
         ]);
 
@@ -299,6 +314,13 @@ final class DepositOrchestratorTest extends TestCase
 
         $this->txFactory->expects($this->once())
             ->method('createDepositTransaction')
+            ->with(
+                (string) $userId,
+                100.0,
+                $lockedRate,
+                'CR1234567',
+                $this->isInstanceOf(IdempotencyKey::class)
+            )
             ->willReturn($transaction);
 
         // Repository save fails
@@ -324,12 +346,14 @@ final class DepositOrchestratorTest extends TestCase
     private function createTransactionMock(): Transaction
     {
         $idempotencyKey = IdempotencyKey::fromHeader('test-key-' . uniqid());
-        $amountKes = Money::kes(13050);
         
         return Transaction::initiateDeposit(
             TransactionId::generate(),
-            $amountKes,
-            $idempotencyKey
+            'test-user-id',
+            Money::usd(10000), // 100.00 USD in cents
+            $this->createLockedRate(130.50),
+            $idempotencyKey,
+            'CR1234567'
         );
     }
 

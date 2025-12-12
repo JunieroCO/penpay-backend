@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace PenPay\Infrastructure\Deriv\Deposit;
 
-use PenPay\Domain\Payments\Entity\DerivTransferResult;
+use PenPay\Domain\Wallet\ValueObject\Money;
+use PenPay\Domain\Wallet\ValueObject\Currency;
+use PenPay\Domain\Payments\Entity\DerivResult;
 use PenPay\Infrastructure\DerivWsGateway\WsClientInterface;
 use React\Promise\PromiseInterface;
 
@@ -22,10 +24,13 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
     ): PromiseInterface {
         $reqId = $this->wsClient->nextReqId();
 
+        // Convert float to Money object for storage
+        $moneyAmount = Money::fromDecimal($amountUsd, Currency::USD);
+
         // Correct payload according to Deriv API documentation
         $payload = [
             'paymentagent_transfer' => 1,
-            'amount'               => $amountUsd,
+            'amount'               => $amountUsd, 
             'currency'             => 'USD',
             'transfer_to'          => $loginId, 
             'description'          => $reference,
@@ -47,7 +52,7 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
         return $this->wsClient->sendAndWait($payload)
             ->then(
                 // Success handler
-                function (array $response) use ($amountUsd, $reqId, $loginId) {
+                function (array $response) use ($moneyAmount, $reqId, $loginId) { // Use $moneyAmount instead of $amountUsd
                     $this->wsClient->getLogger()->info('DerivDepositGateway: Transfer response received', [
                         'req_id' => $reqId,
                         'transfer_to' => $loginId,
@@ -64,7 +69,7 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
                             'response' => $response,
                         ]);
                         
-                        return DerivTransferResult::failure($errorMessage, $response);
+                        return DerivResult::failure($errorMessage, $response);
                     }
 
                     // Check if this is a successful paymentagent_transfer response
@@ -76,7 +81,7 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
                             'actual_msg_type' => $response['msg_type'] ?? 'unknown',
                             'response' => $response,
                         ]);
-                        return DerivTransferResult::failure('Unexpected response type from Deriv API', $response);
+                        return DerivResult::failure('Unexpected response type from Deriv API', $response);
                     }
 
                     // Check if the transfer was successful (1 = success, 2 = dry-run success)
@@ -88,7 +93,7 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
                             'transfer_status' => $transferStatus,
                             'response' => $response,
                         ]);
-                        return DerivTransferResult::failure('Transfer was not successful', $response);
+                        return DerivResult::failure('Transfer was not successful', $response);
                     }
 
                     // Extract transfer details from successful response
@@ -103,7 +108,7 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
                             'transfer_to' => $loginId,
                             'response' => $response,
                         ]);
-                        return DerivTransferResult::failure('Missing transaction ID in response', $response);
+                        return DerivResult::failure('Missing transaction ID in response', $response);
                     }
 
                     $this->wsClient->getLogger()->info('DerivDepositGateway: Transfer successful', [
@@ -113,13 +118,13 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
                         'client_full_name' => $clientFullName,
                         'client_loginid' => $clientLoginId,
                         'transfer_status' => $transferStatus,
-                        'amount_usd' => $amountUsd,
+                        'amount_usd' => $moneyAmount->toDecimal(),
                     ]);
 
-                    return DerivTransferResult::success(
+                    return DerivResult::success(
                         transferId: (string)$transactionId, 
                         txnId: (string)$transactionId,      
-                        amountUsd: $amountUsd,
+                        amountUsd: $moneyAmount, // Pass Money object instead of float
                         rawResponse: $response
                     );
                 },
@@ -132,7 +137,7 @@ final class DerivDepositGateway implements DerivDepositGatewayInterface
                         'exception' => get_class($error),
                     ]);
 
-                    return DerivTransferResult::failure(
+                    return DerivResult::failure(
                         'Transfer request failed: ' . $error->getMessage(),
                         ['error' => $error->getMessage(), 'exception' => get_class($error)]
                     );

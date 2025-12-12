@@ -3,10 +3,13 @@ declare(strict_types=1);
 
 namespace PenPay\Workers\Withdrawal;
 
-use PenPay\Domain\Payments\Aggregate\WithdrawalTransaction;
-use PenPay\Domain\Payments\Repository\WithdrawalTransactionRepositoryInterface;
+use PenPay\Domain\Payments\Aggregate\Transaction;
+use PenPay\Domain\Payments\ValueObject\TransactionType;
+use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
+use PenPay\Domain\Payments\Entity\MpesaDisbursement;
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
+use PenPay\Domain\Shared\ValueObject\PhoneNumber;
 use PenPay\Infrastructure\Mpesa\Withdrawal\MpesaGatewayInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use Psr\Log\LoggerInterface;
@@ -14,8 +17,11 @@ use DateTimeImmutable;
 
 final class MpesaDisbursementWorker
 {
+    private const STREAM_COMPLETED = 'withdrawals.completed';
+    private const STREAM_FAILED    = 'withdrawals.failed';
+
     public function __construct(
-        private readonly WithdrawalTransactionRepositoryInterface $txRepo,
+        private readonly TransactionRepositoryInterface $txRepo,
         private readonly MpesaGatewayInterface $mpesaGateway,
         private readonly RedisStreamPublisherInterface $publisher,
         private readonly LoggerInterface $logger,
@@ -24,12 +30,12 @@ final class MpesaDisbursementWorker
 
     /**
      * Handles: withdrawals.deriv_debited
-     *
-     * @param array{transaction_id: string} $payload
+     * Processes withdrawals in AWAITING_MPESA_DISBURSEMENT state
      */
     public function handle(array $payload): void
     {
         $txIdString = $payload['transaction_id'] ?? null;
+
         if (!$txIdString) {
             $this->logger->warning('MpesaDisbursementWorker: missing transaction_id', $payload);
             return;
@@ -38,141 +44,216 @@ final class MpesaDisbursementWorker
         try {
             $txId = TransactionId::fromString($txIdString);
         } catch (\Throwable) {
-            $this->logger->warning('MpesaDisbursementWorker: invalid transaction_id format', [
+            $this->logger->warning('MpesaDisbursementWorker: invalid transaction_id', [
                 'transaction_id' => $txIdString
             ]);
             return;
         }
 
         $tx = $this->txRepo->getById($txId);
-        if (!$tx instanceof WithdrawalTransaction) {
-            $this->logger->warning('MpesaDisbursementWorker: transaction not found or wrong type', [
+
+        if (!$tx instanceof Transaction) {
+            $this->logger->warning('MpesaDisbursementWorker: transaction not found', [
                 'transaction_id' => $txIdString
             ]);
             return;
         }
 
-        // Idempotency + state machine guard
-        if ($tx->isFinalized()) {
-            $this->logger->info('MpesaDisbursementWorker: already finalized, skipping', [
-                'transaction_id' => $txIdString
+        // Only process withdrawals
+        if ($tx->type() !== TransactionType::WITHDRAWAL) {
+            $this->logger->warning('MpesaDisbursementWorker: not a withdrawal transaction', [
+                'transaction_id' => (string)$txId,
+                'type' => $tx->type()->value
             ]);
             return;
         }
 
-        if ($tx->derivWithdrawal() === null) {
+        // Skip if already has M-Pesa disbursement (idempotency)
+        if ($tx->hasMpesaDisbursement()) {
+            $this->logger->info('MpesaDisbursementWorker: M-Pesa disbursement already recorded, skipping', [
+                'transaction_id' => (string)$txId,
+                'status' => $tx->status()->value
+            ]);
+            return;
+        }
+
+        // Only process withdrawals awaiting M-Pesa disbursement
+        if (!$tx->status()->isAwaitingMpesaDisbursement()) {
+            $this->logger->warning('MpesaDisbursementWorker: transaction not in correct state', [
+                'transaction_id' => (string)$txId,
+                'status' => $tx->status()->value,
+                'expected' => 'AWAITING_MPESA_DISBURSEMENT'
+            ]);
+            return;
+        }
+
+        if ($tx->derivTransfer() === null) {
             $this->failAndPublish($tx, 'deriv_debit_missing', 'Deriv debit not recorded');
             return;
         }
 
-        $exchangeRate = $tx->exchangeRate();
-        if ($exchangeRate === null) {
-            $this->failAndPublish($tx, 'exchange_rate_missing', 'Locked FX rate not set');
+        $lockedRate = $tx->lockedRate();
+        if ($lockedRate === null) {
+            $this->failAndPublish($tx, 'exchange_rate_missing', 'Locked rate not found');
             return;
         }
 
-        // Convert USD → KES (locked rate)
-        $usdAmount = $tx->amountUsd()->toDecimal();
-        $kesCents = (int) round($usdAmount * $exchangeRate * 100);
+        $kesCents = (int) round($tx->amountUsd()->toDecimal() * $lockedRate->rate * 100);
 
         if ($kesCents <= 0) {
-            $this->failAndPublish($tx, 'invalid_kes_amount', 'Calculated KES amount is zero or negative');
+            $this->failAndPublish($tx, 'invalid_kes_amount', 'KES amount calculated as zero');
             return;
         }
 
-        $this->logger->info('MpesaDisbursementWorker: initiating B2C disbursement', [
+        // Check minimum B2C amount (KES 50)
+        if ($kesCents < 5000) {
+            $this->failAndPublish($tx, 'amount_below_minimum', 'KES amount below M-Pesa B2C minimum of 50.00');
+            return;
+        }
+
+        $this->logger->info('Initiating M-Pesa B2C disbursement', [
             'transaction_id' => (string)$txId,
-            'usd'           => $usdAmount,
-            'rate'          => $exchangeRate,
-            'kes_cents'     => $kesCents,
-            'kes'           => $kesCents / 100,
+            'usd_amount'     => $tx->amountUsd()->toDecimal(),
+            'kes_cents'      => $kesCents,
+            'rate'           => $lockedRate->rate,
+            'user_phone'     => $tx->userId(), // TODO: Get actual phone from user profile
         ]);
 
         try {
             $result = $this->mpesaGateway->b2c(
-                phoneNumber: $tx->userId(), // assuming userId is phone, or replace with proper field
+                phoneNumber:    $tx->userId(), // TODO: Replace with real phone from user profile
                 amountKesCents: $kesCents,
-                reference: (string)$txId
+                reference:      (string)$txId
             );
 
-            // DEBUG: Add comprehensive logging
-            $this->logger->debug('MpesaDisbursementWorker: B2C result received', [
-                'success' => $result->isSuccess(),
-                'result_code' => $result->resultCode(),
-                'error_message' => $result->errorMessage(),
-                'receipt' => $result->receiptNumber(),
-                'raw_response' => $result->raw()
+            $this->logger->debug('M-Pesa B2C response received', [
+                'transaction_id' => (string)$txId,
+                'success'        => $result->isSuccess(),
+                'result_code'    => $result->resultCode(),
+                'result_desc'    => $result->errorMessage(),
+                'receipt'        => $result->receiptNumber() ?? 'N/A',
             ]);
 
             if (!$result->isSuccess()) {
-                $this->logger->warning('MpesaDisbursementWorker: B2C failed', [
-                    'error' => $result->errorMessage(),
-                    'result_code' => $result->resultCode()
-                ]);
-                $this->failAndPublish(
-                    $tx,
-                    'mpesa_b2c_failed',
-                    $result->errorMessage() ?? 'Unknown M-Pesa error'
-                );
+                $this->handleMpesaFailure($tx, $result, $kesCents);
                 return;
             }
 
-            $this->logger->debug('MpesaDisbursementWorker: Recording M-Pesa disbursement');
+            // Get raw response for metadata
+            $rawResponse = $result->raw();
 
-            // Try to record the disbursement
-            $tx->recordMpesaDisbursement(
-                mpesaReceipt: $result->receiptNumber(),
-                resultCode: $result->resultCode(),
-                executedAt: new DateTimeImmutable(),
-                amountKes: Money::kes($kesCents),
-                rawResponse: $result->raw()
-            );
-
-            $this->logger->debug('MpesaDisbursementWorker: Saving transaction');
-
-            $this->txRepo->save($tx);
-
-            $this->logger->debug('MpesaDisbursementWorker: Publishing completion event');
-
-            $this->publisher->publish('withdrawals.completed', [
-                'transaction_id' => (string)$tx->id(),
-                'mpesa_receipt'  => $result->receiptNumber(),
-                'amount_kes'     => $kesCents / 100,
-                'completed_at'   => (new DateTimeImmutable())->format('c'),
+            
+            $disbursement = MpesaDisbursement::fromArray([
+                'transaction_id'             => (string)$tx->id(), 
+                'conversation_id'            => $rawResponse['ConversationID'] ?? '',
+                'originator_conversation_id' => $rawResponse['OriginatorConversationID'] ?? '',
+                'phone_number'               => $rawResponse['PhoneNumber'] ?? $tx->userId(),
+                'amount_kes_cents'           => $kesCents,
+                'mpesa_receipt_number'       => $result->receiptNumber(), 
+                'result_code'                => (string)($result->resultCode() ?? ''),
+                'result_description'         => $result->errorMessage() ?? '',
+                'raw_payload'                => $rawResponse,
+                'completed_at'               => (new DateTimeImmutable())->format('c'),
             ]);
 
-            $this->logger->info('MpesaDisbursementWorker: withdrawal completed successfully', [
+            // Record the disbursement (will mark transaction as COMPLETED if successful)
+            $tx->recordMpesaDisbursement($disbursement);
+            $this->txRepo->save($tx);
+
+            if ($disbursement->isSuccessful()) {
+                $this->publisher->publish(self::STREAM_COMPLETED, [
+                    'transaction_id' => (string)$tx->id(),
+                    'mpesa_receipt'  => $result->receiptNumber(),
+                    'amount_kes'     => $kesCents / 100,
+                    'completed_at'   => (new DateTimeImmutable())->format('c'),
+                ]);
+
+                $this->logger->info('Withdrawal fully completed — funds disbursed via M-Pesa', [
+                    'transaction_id' => (string)$txId,
+                    'mpesa_receipt'  => $result->receiptNumber(),
+                    'amount_kes'     => $kesCents / 100,
+                ]);
+
+                return; 
+            }
+
+            $this->logger->error('M-Pesa disbursement recorded but not marked as successful', [
                 'transaction_id' => (string)$txId,
-                'mpesa_receipt'  => $result->receiptNumber(),
+                'result_code'    => $disbursement->resultCode,
+                'result_desc'    => $disbursement->resultDescription,
             ]);
 
         } catch (\Throwable $e) {
-            $this->logger->error('MpesaDisbursementWorker: exception during B2C', [
+            $this->logger->error('M-Pesa disbursement failed with exception', [
                 'transaction_id' => (string)$txId,
-                'error'         => $e->getMessage(),
-                'trace'         => $e->getTraceAsString(),
+                'error'          => $e->getMessage(),
+                'trace'          => $e->getTraceAsString(),
             ]);
 
             $this->failAndPublish($tx, 'mpesa_disbursement_exception', $e->getMessage());
         }
     }
 
-    private function failAndPublish(WithdrawalTransaction $tx, string $reason, string $detail): void
+    private function handleMpesaFailure(Transaction $tx, $result, int $kesCents): void
     {
-        $this->logger->warning('MpesaDisbursementWorker: Failing transaction', [
-            'transaction_id' => (string)$tx->id(),
-            'reason' => $reason,
-            'detail' => $detail
-        ]);
+        $errorMessage = $result->errorMessage() ?? 'M-Pesa B2C failed without description';
+        
+        // Check if transaction can be retried
+        if ($tx->canRetry($this->maxRetries)) {
+            $tx->incrementRetryCount();
+            $this->txRepo->save($tx);
+            
+            $this->logger->warning('M-Pesa B2C failed, will retry', [
+                'transaction_id' => (string)$tx->id(),
+                'error'          => $errorMessage,
+                'retry_count'    => $tx->retryCount(),
+                'max_retries'    => $this->maxRetries,
+            ]);
+            
+            // Transaction stays in AWAITING_MPESA_DISBURSEMENT for retry
+        } else {
+            // Max retries exceeded, fail the transaction
+            $this->logger->error('M-Pesa B2C failed, max retries exceeded', [
+                'transaction_id' => (string)$tx->id(),
+                'error'          => $errorMessage,
+                'retry_count'    => $tx->retryCount(),
+            ]);
+            
+            $this->failAndPublish(
+                $tx,
+                'mpesa_b2c_failed',
+                $errorMessage
+            );
+        }
+    }
 
-        $tx->fail($reason, $detail);
-        $this->txRepo->save($tx);
-
-        $this->publisher->publish('withdrawals.failed', [
+    private function failAndPublish(Transaction $tx, string $reason, string $detail): void
+    {
+        $this->logger->warning('Failing withdrawal transaction', [
             'transaction_id' => (string)$tx->id(),
             'reason'         => $reason,
             'detail'         => $detail,
-            'failed_at'      => (new DateTimeImmutable())->format('c'),
+            'status'         => $tx->status()->value,
         ]);
+
+        try {
+            $tx->fail($reason, $detail);
+            $this->txRepo->save($tx);
+
+            $this->publisher->publish(self::STREAM_FAILED, [
+                'transaction_id' => (string)$tx->id(),
+                'reason'         => $reason,
+                'detail'         => $detail,
+                'failed_at'      => (new DateTimeImmutable())->format('c'),
+                'retry_count'    => $tx->retryCount(),
+            ]);
+        } catch (\DomainException $e) {
+            // Transaction might already be in terminal state
+            $this->logger->error('Failed to mark transaction as failed', [
+                'transaction_id' => (string)$tx->id(),
+                'error'          => $e->getMessage(),
+                'current_status' => $tx->status()->value,
+            ]);
+        }
     }
 }

@@ -7,7 +7,7 @@ use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\MockObject\MockObject;
 use PenPay\Infrastructure\Deriv\Withdrawal\DerivWithdrawalGateway;
 use PenPay\Infrastructure\DerivWsGateway\WsClientInterface;
-use PenPay\Domain\Payments\Entity\DerivWithdrawalResult; 
+use PenPay\Domain\Payments\Entity\DerivResult; 
 use React\EventLoop\Loop; 
 use React\Promise\PromiseInterface;
 
@@ -43,7 +43,7 @@ final class DerivWithdrawalGatewayTest extends TestCase
 
         $this->assertTrue($result->isSuccess());
         $this->assertSame('987654', $result->txnId());
-        $this->assertSame(100.0, $result->amountUsd());
+        $this->assertSame(100.0, $result->amountUsd()->toDecimal());
     }
 
     /** @test */
@@ -161,7 +161,7 @@ final class DerivWithdrawalGatewayTest extends TestCase
     /** @test */ public function it_throws_exception_for_empty_verification_code(): void { $this->expectException(\InvalidArgumentException::class); $this->gateway->withdraw('CR1', 10.0, '', 'ref'); }
 
     // FINAL, ETERNAL AWAIT METHOD — FIXED
-    private function awaitPromise(PromiseInterface $promise): DerivWithdrawalResult
+    private function awaitPromise(PromiseInterface $promise): DerivResult
     {
         $loop = Loop::get(); // Now imported!
         $result = null;
@@ -172,7 +172,7 @@ final class DerivWithdrawalGatewayTest extends TestCase
             },
             function ($reason) use (&$result) {
                 $msg = $reason instanceof \Throwable ? $reason->getMessage() : 'Unknown';
-                $result = DerivWithdrawalResult::failure("Network error: {$msg}", []);
+                $result = DerivResult::failure("Network error: {$msg}", []);
             }
         );
 
@@ -180,7 +180,7 @@ final class DerivWithdrawalGatewayTest extends TestCase
             $loop->run();
         }
 
-        /** @var DerivWithdrawalResult $result */
+        /** @var DerivResult $result */
         return $result;
     }
 }

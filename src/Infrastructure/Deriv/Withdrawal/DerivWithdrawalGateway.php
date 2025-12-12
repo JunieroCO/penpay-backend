@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace PenPay\Infrastructure\Deriv\Withdrawal;
 
-use PenPay\Domain\Payments\Entity\DerivWithdrawalResult;
+use PenPay\Domain\Wallet\ValueObject\Money;
+use PenPay\Domain\Wallet\ValueObject\Currency;
+use PenPay\Domain\Payments\Entity\DerivResult;
 use PenPay\Infrastructure\DerivWsGateway\WsClientInterface;
 use React\Promise\PromiseInterface;
 
@@ -22,6 +24,9 @@ final class DerivWithdrawalGateway implements DerivWithdrawalGatewayInterface
         if ($loginId === '' || $amountUsd <= 0 || $verificationCode === '') {
             throw new \InvalidArgumentException('Invalid withdrawal parameters');
         }
+
+        // Convert float to Money object for consistent domain usage
+        $moneyAmount = Money::fromDecimal($amountUsd, Currency::USD);
 
         $payload = [
             'paymentagent_withdraw' => 1,
@@ -42,7 +47,7 @@ final class DerivWithdrawalGateway implements DerivWithdrawalGatewayInterface
 
         return $this->wsClient->sendAndWait($payload)
             ->then(
-                function (array $response) use ($amountUsd, $loginId, $payload) {
+                function (array $response) use ($moneyAmount, $loginId, $payload) {
                     $reqId = $payload['req_id'];
 
                     if (isset($response['error'])) {
@@ -62,35 +67,35 @@ final class DerivWithdrawalGateway implements DerivWithdrawalGatewayInterface
                             'message' => $mapped
                         ]);
 
-                        return DerivWithdrawalResult::failure($mapped, $response);
+                        return DerivResult::failure($mapped, $response);
                     }
 
                     // Correct path: response has top-level 'paymentagent_withdraw' => 1
                     if (!isset($response['paymentagent_withdraw']) || $response['paymentagent_withdraw'] !== 1) {
-                        return DerivWithdrawalResult::failure('Withdrawal not confirmed by Deriv', $response);
+                        return DerivResult::failure('Withdrawal not confirmed by Deriv', $response);
                     }
 
                     $txnId = $response['transaction_id'] ?? null;
                     if (!$txnId) {
-                        return DerivWithdrawalResult::failure('Missing transaction_id in response', $response);
+                        return DerivResult::failure('Missing transaction_id in response', $response);
                     }
 
                     $this->wsClient->getLogger()->info('Withdrawal successful', [
                         'req_id' => $reqId,
                         'loginid' => $loginId,
                         'transaction_id' => $txnId,
-                        'amount_usd' => $amountUsd
+                        'amount_usd' => $moneyAmount->toDecimal()
                     ]);
 
-                    return DerivWithdrawalResult::success(
+                    return DerivResult::success(
                         transferId: (string)$txnId,
                         txnId: (string)$txnId,
-                        amountUsd: $amountUsd,
+                        amountUsd: $moneyAmount, // Pass Money object instead of float
                         rawResponse: $response
                     );
                 },
                 function (\Throwable $e) use ($payload) {
-                    return DerivWithdrawalResult::failure(
+                    return DerivResult::failure(
                         'Network error: ' . $e->getMessage(),
                         ['exception' => get_class($e)]
                     );

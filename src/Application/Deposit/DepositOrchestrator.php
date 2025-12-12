@@ -13,9 +13,7 @@ use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Infrastructure\Audit\AuditLoggerInterface;
 use PenPay\Domain\Payments\Aggregate\Transaction;
 use PenPay\Domain\Payments\ValueObject\IdempotencyKey;
-use PenPay\Domain\Shared\Kernel\UserId;
-use PenPay\Domain\Wallet\ValueObject\Money;           
-use PenPay\Domain\Wallet\ValueObject\Currency;        
+use PenPay\Domain\Wallet\ValueObject\Money;
 use RuntimeException;
 use Throwable;
 
@@ -24,112 +22,120 @@ final readonly class DepositOrchestrator
     private const STREAM_DEPOSIT_INITIATED = 'deposits.initiated';
 
     public function __construct(
-        private TransactionRepositoryInterface     $txRepo,
-        private TransactionFactoryInterface        $txFactory,
-        private FxServiceInterface                 $fxService,
-        private DailyLimitCheckerInterface         $dailyLimit,
-        private LedgerRecorderInterface            $ledger,
-        private RedisStreamPublisherInterface      $publisher,
-        private ?AuditLoggerInterface              $auditLogger = null,
+        private TransactionRepositoryInterface $txRepo,
+        private TransactionFactoryInterface    $txFactory,
+        private FxServiceInterface             $fxService,
+        private DailyLimitCheckerInterface     $dailyLimit,
+        private LedgerRecorderInterface        $ledger,
+        private RedisStreamPublisherInterface  $publisher,
+        private ?AuditLoggerInterface          $auditLogger = null,
     ) {}
 
-    public function execute(DepositRequestDTO $command): Transaction
+    public function execute(DepositRequestDTO $dto): Transaction
     {
         $startTime = microtime(true);
-        $userId    = $command->userId;
-        $amountUsd = $command->amountUsd->toFloat();
-        $amountUsdMoney = Money::fromDecimal($amountUsd, Currency::USD);
+        $userId    = $dto->userId;
+        $amountUsd = Money::usd((int) round($dto->amountUsd->toFloat() * 100));
 
         try {
-            // 1. Idempotency
-            $idempotencyKey = $command->idempotencyKey
-                ? IdempotencyKey::fromHeader($command->idempotencyKey)
-                : null;
-
-            if ($idempotencyKey) {
-                $existing = $this->txRepo->findByIdempotencyKey($idempotencyKey);
+            // 1. Idempotency Check
+            if ($dto->idempotencyKey) {
+                $idempotencyKeyObj = IdempotencyKey::fromHeader($dto->idempotencyKey);
+                $existing = $this->txRepo->findByIdempotencyKey($idempotencyKeyObj);
                 if ($existing) {
-                    $this->auditSuccess($command, $existing, $startTime, 'idempotent');
+                    $this->auditSuccess($dto, $existing, $startTime, 'idempotent');
                     return $existing;
                 }
             }
 
-            // 2. Daily limit
-            if (!$this->dailyLimit->canDeposit((string) $userId, $amountUsdMoney)) {
+            // 2. Daily Limit
+            $amountUsdFloat = $dto->amountUsd->toFloat();
+            $amountUsdMoney = Money::usd((int) round($amountUsdFloat * 100));
+            if (!$this->dailyLimit->canDeposit((string) $userId, $amountUsd)) {
                 throw new RuntimeException('Daily deposit limit exceeded');
             }
 
-            // 3. Lock FX rate
+            // 3. Lock FX Rate
             $lockedRate = $this->fxService->lockRate('USD', 'KES');
 
-            // 4. Create transaction
+            // 4. Create Transaction via Factory (cents-based, safe)
+            $idempotencyKey = $dto->idempotencyKey
+                ? IdempotencyKey::fromHeader($dto->idempotencyKey)
+                : null;
+                
             $transaction = $this->txFactory->createDepositTransaction(
                 userId: (string) $userId,
-                amountUsd: $amountUsd,
+                amountUsd: $amountUsdFloat,
                 lockedRate: $lockedRate,
+                userDerivLoginId: $dto->userDerivLoginId,
                 idempotencyKey: $idempotencyKey
             );
 
             // 5. Persist
             $this->txRepo->save($transaction);
 
-            // 6. Ledger
+            // 6. Ledger (async-safe)
             $this->ledger->recordDepositInitiated(
-                userId: (string) $userId,              
-                transactionId: $transaction->getId(),   
-                amountUsd: $amountUsdMoney,
-                amountKes: $transaction->getAmount(),
+                userId: (string) $userId,
+                transactionId: $transaction->id(),
+                amountUsd: $amountUsd,
+                amountKes: $transaction->amountKes(),
                 lockedRate: $lockedRate
             );
 
-            // 7. Publish event
+            // 7. Publish to Stream (fire-and-forget)
             $this->publisher->publish(self::STREAM_DEPOSIT_INITIATED, [
-                'transaction_id' => (string) $transaction->getId(),
-                'user_id'        => (string) $userId,
-                'amount_usd'     => $amountUsd,
-                'amount_kes'     => $transaction->getAmount()->cents,
-                'rate'           => $lockedRate->rate,  
-                'device_id'      => $command->deviceId,
-                'timestamp'      => time(),
+                'transaction_id'     => (string) $transaction->id(),
+                'user_id'            => (string) $userId,
+                'amount_usd_cents'   => $amountUsd->cents,
+                'amount_kes_cents'   => $transaction->amountKes()->cents,
+                'rate'               => $lockedRate->rate,
+                'deriv_login_id'     => $dto->userDerivLoginId,
+                'device_id'          => $dto->deviceId,
+                'idempotency_key'    => $dto->idempotencyKey,
+                'timestamp'          => time(),
             ]);
 
-            $this->auditSuccess($command, $transaction, $startTime, 'created');
+            $this->auditSuccess($dto, $transaction, $startTime, 'created');
+
             return $transaction;
 
         } catch (Throwable $e) {
-            $this->auditFailure($command, $e, $startTime);
+            $this->auditFailure($dto, $e, $startTime);
             throw new RuntimeException('Deposit failed: ' . $e->getMessage(), 0, $e);
         }
     }
 
     private function auditSuccess(
-        DepositRequestDTO $command,
+        DepositRequestDTO $dto,
         Transaction $tx,
         float $start,
         string $outcome
     ): void {
         $this->auditLogger?->info('deposit.success', [
-            'event'           => 'deposit_success',
-            'transaction_id'  => (string) $tx->getId(),
-            'user_id'         => (string) $command->userId,
-            'amount_usd'      => $command->amountUsd->toFloat(),
-            'amount_kes'      => $tx->getAmount()->cents,
-            'outcome'         => $outcome,
-            'device_id'       => $command->deviceId,
-            'idempotency_key' => $command->idempotencyKey,
-            'duration_ms'     => round((microtime(true) - $start) * 1000, 2),
-            'timestamp'       => date('c'),
+            'event'            => 'deposit_success',
+            'transaction_id'   => (string) $tx->id(),
+            'user_id'          => (string) $dto->userId,
+            'amount_usd_cents' => $tx->amountUsd()->cents,
+            'amount_kes_cents' => $tx->amountKes()->cents,
+            'deriv_login_id'   => $dto->userDerivLoginId,
+            'outcome'          => $outcome,
+            'device_id'        => $dto->deviceId,
+            'idempotency_key'  => $dto->idempotencyKey,
+            'duration_ms'      => round((microtime(true) - $start) * 1000, 2),
+            'timestamp'        => date('c'),
         ]);
     }
 
-    private function auditFailure(DepositRequestDTO $command, Throwable $e, float $start): void
+    private function auditFailure(DepositRequestDTO $dto, Throwable $e, float $start): void
     {
         $this->auditLogger?->error('deposit.failed', [
             'event'           => 'deposit_failed',
-            'user_id'         => (string) $command->userId,
-            'amount_usd'      => $command->amountUsd->toFloat(),
-            'device_id'       => $command->deviceId,
-            'idempotency_key' => $command->idempotencyKey,
+            'user_id'         => (string) $dto->userId,
+            'amount_usd'      => $dto->amountUsd->toFloat(),
+            'deriv_login_id'  => $dto->userDerivLoginId,
+            'device_id'       => $dto->deviceId,
+            'idempotency_key' => $dto->idempotencyKey,
             'error'           => $e->getMessage(),
             'duration_ms'     => round((microtime(true) - $start) * 1000, 2),
             'timestamp'       => date('c'),

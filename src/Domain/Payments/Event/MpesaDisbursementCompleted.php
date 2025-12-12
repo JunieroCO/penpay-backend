@@ -4,32 +4,29 @@ declare(strict_types=1);
 namespace PenPay\Domain\Payments\Event;
 
 use PenPay\Domain\Shared\Kernel\TransactionId;
-
 use DateTimeImmutable;
 
-final readonly class TransactionCreated
+final readonly class MpesaDisbursementCompleted
 {
     public function __construct(
         public TransactionId $transactionId,
         public string $userId,
-        public string $type,
-        public int $amountUsdCents,
+        public string $conversationId,
+        public string $mpesaReceiptNumber,
         public int $amountKesCents,
-        public string $idempotencyKey,
-        public DateTimeImmutable $occurredAt
+        public DateTimeImmutable $disbursedAt
     ) {}
 
     public function toArray(): array
     {
         return [
-            'event_type' => 'TransactionCreated',
+            'event_type' => 'MpesaDisbursementCompleted',
             'transaction_id' => (string) $this->transactionId,
             'user_id' => $this->userId,
-            'type' => $this->type,
-            'amount_usd_cents' => $this->amountUsdCents,
+            'conversation_id' => $this->conversationId,
+            'mpesa_receipt_number' => $this->mpesaReceiptNumber,
             'amount_kes_cents' => $this->amountKesCents,
-            'idempotency_key' => $this->idempotencyKey,
-            'occurred_at' => $this->occurredAt->format(DATE_ATOM),
+            'disbursed_at' => $this->disbursedAt->format(DATE_ATOM),
         ];
     }
 }

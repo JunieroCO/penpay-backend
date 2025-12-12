@@ -5,7 +5,7 @@ namespace PenPay\Domain\Payments\Entity;
 
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
-use PenPay\Domain\Wallet\ValueObject\Currency;
+use PenPay\Domain\Shared\ValueObject\PhoneNumber;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -13,58 +13,60 @@ final readonly class MpesaRequest
 {
     public function __construct(
         public TransactionId $transactionId,
-        public string $phoneNumber,
+        public PhoneNumber $phoneNumber,
         public Money $amountKes,
         public string $merchantRequestId,
         public string $checkoutRequestId,
         public ?string $mpesaReceiptNumber = null,
         public ?DateTimeImmutable $callbackReceivedAt = null,
         public DateTimeImmutable $initiatedAt = new DateTimeImmutable(),
+        public array $rawPayload = [],
     ) {
-        if (!preg_match('/^2547[0-9]{8}$/', $phoneNumber)) {
-            throw new InvalidArgumentException("Invalid Kenyan phone number: {$phoneNumber}");
-        }
-        if ($amountKes->currency !== Currency::KES) {
-            throw new InvalidArgumentException('M-Pesa amount must be in KES');
+        if (!$amountKes->currency->isKes()) {
+            throw new InvalidArgumentException('M-Pesa request amount must be in KES.');
         }
     }
 
     public static function initiated(
         TransactionId $transactionId,
         string $checkoutRequestId,
-        string $phoneNumber,
-        int $amountKesCents,
-        ?string $merchantRequestId = null
+        PhoneNumber $phoneNumber,
+        Money $amountKes,
+        ?string $merchantRequestId = null,
+        array $rawPayload = [],
     ): self {
         return new self(
             transactionId: $transactionId,
             phoneNumber: $phoneNumber,
-            amountKes: Money::kes($amountKesCents),
+            amountKes: $amountKes,
             merchantRequestId: $merchantRequestId ?? 'merchant-' . uniqid(),
             checkoutRequestId: $checkoutRequestId,
             mpesaReceiptNumber: null,
             callbackReceivedAt: null,
-            initiatedAt: new DateTimeImmutable()
+            initiatedAt: new DateTimeImmutable(),
+            rawPayload: $rawPayload
         );
     }
 
     public static function fromCallback(
         string $checkoutRequestId,
         ?string $mpesaReceiptNumber,
-        string $phoneNumber,
-        int $amountKesCents,
+        PhoneNumber $phoneNumber,
+        Money $amountKes,
         DateTimeImmutable $callbackReceivedAt,
-        ?string $merchantRequestId = null
+        ?string $merchantRequestId = null,
+        array $rawPayload = [],
     ): self {
         return new self(
-            transactionId: TransactionId::fromString('tmp'), 
+            transactionId: TransactionId::fromString('00000000-0000-7000-8000-000000000000'),
             phoneNumber: $phoneNumber,
-            amountKes: Money::kes($amountKesCents),
+            amountKes: $amountKes,
             merchantRequestId: $merchantRequestId ?? 'merchant-callback-' . uniqid(),
             checkoutRequestId: $checkoutRequestId,
             mpesaReceiptNumber: $mpesaReceiptNumber,
             callbackReceivedAt: $callbackReceivedAt,
-            initiatedAt: new DateTimeImmutable()
+            initiatedAt: new DateTimeImmutable(),
+            rawPayload: $rawPayload
         );
     }
 

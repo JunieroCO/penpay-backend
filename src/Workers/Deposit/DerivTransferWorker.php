@@ -5,31 +5,18 @@ namespace PenPay\Workers\Deposit;
 
 use PenPay\Domain\Payments\Aggregate\Transaction;
 use PenPay\Domain\Payments\Entity\DerivTransfer;
-use PenPay\Domain\Payments\Entity\DerivTransferResult;
+use PenPay\Domain\Payments\Entity\DerivResult; 
 use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
 use PenPay\Infrastructure\Deriv\Deposit\DerivDepositGatewayInterface;
+use PenPay\Infrastructure\Deriv\DerivConfig;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use Psr\Log\LoggerInterface;
 use React\EventLoop\LoopInterface;
 use Throwable;
 use DateTimeImmutable;
 
-/**
- * DerivTransferWorker — Final & Eternal
- *
- * Consumes: deposits.mpesa_confirmed
- * Purpose:  Finalize deposit by crediting user's Deriv account via Payment Agent
- * Guarantees:
- *   • Idempotent
- *   • Money-safe
- *   • Observable
- *   • Resilient
- *   • Production-grade
- *
- * This is the last mile of African fintech.
- */
 final class DerivTransferWorker
 {
     private const MAX_RETRIES = 3;
@@ -41,6 +28,7 @@ final class DerivTransferWorker
         private readonly RedisStreamPublisherInterface $publisher,
         private readonly LoggerInterface $logger,
         private readonly LoopInterface $loop,
+        private readonly DerivConfig $derivConfig,
     ) {}
 
     /**
@@ -73,7 +61,7 @@ final class DerivTransferWorker
         if ($transaction->isFinalized()) {
             $this->logger->info('DerivTransferWorker: already finalized — skipping', [
                 'transaction_id' => (string)$txId,
-                'status' => $transaction->getStatus()->value,
+                'status' => $transaction->status()->value,
             ]);
             return;
         }
@@ -86,12 +74,12 @@ final class DerivTransferWorker
             return;
         }
 
-        // === GUARD: Must have Deriv credentials and USD amount ===
-        if (!$transaction->hasDerivCredentials() || !$transaction->hasUsdAmount()) {
+        // === GUARD: Must have Deriv login ID ===
+        if (!$transaction->hasDerivLoginId()) {
             $this->failTransaction(
                 $transaction,
                 'missing_deriv_data',
-                'User has no Deriv account or USD amount not set'
+                'User has no Deriv account'
             );
             return;
         }
@@ -103,14 +91,20 @@ final class DerivTransferWorker
                 $this->logger->info('DerivTransferWorker: calling Deriv payment_agent_deposit', [
                     'transaction_id' => (string)$txId,
                     'attempt' => $attempt,
-                    'amount_usd' => $transaction->amountUsd(),
+                    'amount_usd_cents' => $transaction->amountUsd()->cents,
                     'login_id' => $transaction->userDerivLoginId(),
                 ]);
 
+                $paymentAgentToken = $this->derivConfig->agentToken();
+                
+                if (empty($paymentAgentToken)) {
+                    throw new \RuntimeException('Payment agent token not configured');
+                }
+
                 $promise = $this->derivGateway->deposit(
                     loginId: $transaction->userDerivLoginId(),
-                    amountUsd: $transaction->amountUsd(),
-                    paymentAgentToken: $transaction->paymentAgentToken(),
+                    amountUsd: $transaction->amountUsd()->toDecimal(), 
+                    paymentAgentToken: $paymentAgentToken,
                     reference: (string)$txId,
                     metadata: [
                         'mpesa_receipt' => $payload['mpesa_receipt'] ?? null,
@@ -123,7 +117,7 @@ final class DerivTransferWorker
                 $error = null;
 
                 $promise->then(
-                    function (DerivTransferResult $res) use (&$result) {
+                    function (DerivResult $res) use (&$result) { // Changed type hint
                         $result = $res;
                         $this->loop->stop();
                     },
@@ -193,38 +187,46 @@ final class DerivTransferWorker
         }
     }
 
-    private function completeTransaction(Transaction $tx, DerivTransferResult $result, array $payload): void
+    private function completeTransaction(Transaction $tx, DerivResult $result, array $payload): void // Changed type hint
     {
         try {
-            $derivTransfer = DerivTransfer::success(
-                transactionId: $tx->getId(),
-                derivAccountId: $tx->userDerivLoginId(),
-                amountUsd: Money::usd((int) round($result->amountUsd() * 100)),
+            // Get payment agent login ID from config
+            $paymentAgentLoginId = $this->derivConfig->defaultLoginId();
+            
+            if (empty($paymentAgentLoginId)) {
+                throw new \RuntimeException('Payment agent login ID not configured');
+            }
+
+            $derivTransfer = DerivTransfer::forDeposit(
+                transactionId: $tx->id(),
+                paymentAgentLoginId: $paymentAgentLoginId,
+                userDerivLoginId: $tx->userDerivLoginId(),
+                amountUsd: $result->amountUsd(), // Directly use Money object from result
                 derivTransferId: $result->transferId(),
                 derivTxnId: $result->txnId(),
                 executedAt: new DateTimeImmutable(),
                 rawResponse: $result->raw()
             );
 
-            $tx->completeWithDerivTransfer($derivTransfer);
+            $tx->recordDerivTransfer($derivTransfer);
             $this->txRepo->save($tx);
 
             $this->publisher->publish('deposits.completed', [
-                'transaction_id' => (string)$tx->getId(),
+                'transaction_id' => (string)$tx->id(),
                 'deriv_txn_id' => $result->txnId(),
                 'deriv_transfer_id' => $result->transferId(),
-                'amount_usd' => $tx->amountUsd(),
-                'mpesa_receipt' => $tx->mpesaReceiptNumber(),
+                'amount_usd_cents' => $tx->amountUsd()->cents,
+                'mpesa_receipt' => $tx->mpesaRequest()?->mpesaReceiptNumber ?? '',
                 'completed_at' => (new DateTimeImmutable())->format('c'),
             ]);
 
             $this->logger->info('DerivTransferWorker: deposit completed', [
-                'transaction_id' => (string)$tx->getId(),
+                'transaction_id' => (string)$tx->id(),
                 'deriv_txn_id' => $result->txnId(),
             ]);
         } catch (Throwable $e) {
             $this->logger->critical('DerivTransferWorker: failed to persist completion', [
-                'transaction_id' => (string)$tx->getId(),
+                'transaction_id' => (string)$tx->id(),
                 'error' => $e->getMessage(),
             ]);
         }
@@ -233,25 +235,25 @@ final class DerivTransferWorker
     private function failTransaction(Transaction $tx, string $reason, string $message): void
     {
         try {
-            $tx->fail($reason);
+            $tx->fail($reason, $message);
 
             $this->txRepo->save($tx);
 
             $this->publisher->publish('deposits.failed', [
-                'transaction_id' => (string)$tx->getId(),
+                'transaction_id' => (string)$tx->id(),
                 'reason' => $reason,
                 'message' => $message,
                 'failed_at' => (new DateTimeImmutable())->format('c'),
             ]);
 
             $this->logger->warning('DerivTransferWorker: deposit failed', [
-                'transaction_id' => (string)$tx->getId(),
+                'transaction_id' => (string)$tx->id(),
                 'reason' => $reason,
                 'message' => $message,
             ]);
         } catch (Throwable $e) {
             $this->logger->critical('DerivTransferWorker: failed to persist failure', [
-                'transaction_id' => (string)$tx->getId(),
+                'transaction_id' => (string)$tx->id(),
                 'error' => $e->getMessage(),
             ]);
         }

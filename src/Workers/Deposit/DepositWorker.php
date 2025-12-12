@@ -3,128 +3,172 @@ declare(strict_types=1);
 
 namespace PenPay\Workers\Deposit;
 
-use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
 use PenPay\Infrastructure\Mpesa\Deposit\MpesaClientInterface;
+use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Domain\Payments\Entity\MpesaRequest;
 use PenPay\Domain\Shared\Kernel\TransactionId;
+use PenPay\Domain\Wallet\ValueObject\Money;
+use PenPay\Domain\Shared\ValueObject\PhoneNumber;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
 final class DepositWorker
 {
+    private const STREAM_MPESAREQUEST_INITIATED = 'deposits.mpesa_requested';
+    private const STREAM_DEPOSIT_INITIATED = 'deposits.initiated';
+
     public function __construct(
         private readonly TransactionRepositoryInterface $txRepo,
         private readonly MpesaClientInterface $mpesaClient,
         private readonly RedisStreamPublisherInterface $publisher,
         private readonly LoggerInterface $logger,
-        private readonly int $maxRetries = 3
+        private readonly int $maxRetries = 3,
     ) {}
 
     public function handle(array $message): void
     {
         $txIdString = $message['transaction_id'] ?? null;
         if (!$txIdString) {
-            $this->logger->warning('deposit.initiated missing transaction_id', $message);
+            $this->logger->warning('deposit.initiated missing transaction_id', ['payload' => $message]);
             return;
         }
 
         try {
             $txId = TransactionId::fromString($txIdString);
-        } catch (\InvalidArgumentException $e) {
-            $this->logger->error('Invalid transaction ID format', ['id' => $txIdString]);
+        } catch (\InvalidArgumentException) {
+            $this->logger->error('Invalid transaction_id format', ['transaction_id' => $txIdString]);
             return;
         }
 
         $transaction = $this->txRepo->getById($txId);
-        if (!$transaction) {
-            $this->logger->error('Transaction not found', ['transaction_id' => $txIdString]);
-            return;
-        }
 
-        // IDEMPOTENCY: Skip if already processed
-        if (!$transaction->getStatus()->isPending()) {
-            $this->logger->info('STK push already processed', [
-                'transaction_id' => $txIdString,
-                'status' => $transaction->getStatus()->value
+        // IDEMPOTENCY: Already processed?
+        if (!$transaction->status()->isPending()) {
+            $this->logger->info('STK push already initiated or completed', [
+                'transaction_id' => (string)$txId,
+                'status' => $transaction->status()->value,
             ]);
             return;
         }
 
-        $kesCents = $message['kes_cents'] ?? $message['amount_kes'] ?? null;
-        $phone = $message['phone'] ?? '254712345678';
+        $kesCents = (int) ($message['amount_kes_cents'] ?? $message['amount_kes'] ?? 0);
+        $phoneRaw = $message['phone'] ?? null;
 
-        if (!$kesCents || $kesCents <= 0) {
-            $this->logger->error('Invalid amount', ['transaction_id' => $txIdString]);
+        if ($kesCents <= 0) {
+            $this->failTransaction($transaction, 'invalid_amount_in_payload');
+            return;
+        }
+
+        if (!$phoneRaw) {
+            $this->failTransaction($transaction, 'missing_phone_number');
+            return;
+        }
+
+        try {
+            $phone = PhoneNumber::fromKenyan($phoneRaw);
+        } catch (\InvalidArgumentException $e) {
+            $this->failTransaction($transaction, 'invalid_phone_format', $e->getMessage());
             return;
         }
 
         $attempt = 0;
         while ($attempt < $this->maxRetries) {
             $attempt++;
+
             try {
-                $this->logger->info('Attempting STK push', [
-                    'transaction_id' => $txIdString,
+                $this->logger->info('Initiating STK Push', [
+                    'transaction_id' => (string)$txId,
                     'attempt' => $attempt,
-                    'amount_kes_cents' => $kesCents
+                    'phone' => $phone->toE164(),
+                    'amount_kes_cents' => $kesCents,
                 ]);
 
+                // M-Pesa Daraja API expects 2547xxxxxxxx format (without +)
+                $phoneForMpesa = substr($phone->toE164(), 1); // Remove the + sign
+                
                 $response = $this->mpesaClient->initiateStkPush(
-                    phoneNumber: $phone,
-                    amountKesCents: (int)$kesCents,
-                    transactionId: $txIdString,
+                    phoneNumber: $phoneForMpesa,
+                    amountKesCents: $kesCents,
+                    transactionId: (string)$txId,
                     callbackUrl: $_ENV['MPESA_CALLBACK_URL'] ?? 'https://api.penpay.africa/mpesa/callback'
                 );
 
+                // Update transaction state first
+                $transaction->markStkPushInitiated();
+                $transaction->markAwaitingMpesaCallback();
+
+                // Create immutable MpesaRequest entity
                 $mpesaRequest = MpesaRequest::initiated(
-                    transactionId: $transaction->getId(),
+                    transactionId: $transaction->id(),
                     checkoutRequestId: $response->CheckoutRequestID,
                     phoneNumber: $phone,
-                    amountKesCents: (int)$kesCents
+                    amountKes: Money::kes($kesCents),
+                    merchantRequestId: $response->MerchantRequestID ?? null,
+                    rawPayload: (array) $response
                 );
 
+                // Record in domain
                 $transaction->recordMpesaCallback($mpesaRequest);
                 $this->txRepo->save($transaction);
 
-                $this->publisher->publish('deposits.mpesa_requested', [
-                    'transaction_id' => $txIdString,
+                // Publish next step
+                $this->publisher->publish(self::STREAM_MPESAREQUEST_INITIATED, [
+                    'transaction_id' => (string)$txId,
                     'checkout_request_id' => $response->CheckoutRequestID,
-                    'phone' => $phone,
-                    'amount_kes_cents' => (int)$kesCents,
+                    'phone' => $phone->toE164(),
+                    'amount_kes_cents' => $kesCents,
+                    'merchant_request_id' => $response->MerchantRequestID ?? null,
+                    'timestamp' => time(),
                 ]);
 
-                $this->logger->info('STK push successful', [
-                    'transaction_id' => $txIdString,
-                    'checkout_request_id' => $response->CheckoutRequestID
+                $this->logger->info('STK Push initiated successfully', [
+                    'transaction_id' => (string)$txId,
+                    'checkout_request_id' => $response->CheckoutRequestID,
+                    'phone' => $phone->toE164(),
                 ]);
 
-                return;
+                return; // SUCCESS
 
             } catch (Throwable $e) {
-                $this->logger->warning('STK push failed', [
-                    'transaction_id' => $txIdString,
+                $this->logger->warning('STK Push failed', [
+                    'transaction_id' => (string)$txId,
                     'attempt' => $attempt,
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
+                    'exception' => $e::class,
                 ]);
 
                 if ($attempt >= $this->maxRetries) {
-                    $transaction->fail('mpesa_stk_push_failed');
-                    $this->txRepo->save($transaction);
-
-                    $this->publisher->publish('deposits.failed', [
-                        'transaction_id' => $txIdString,
-                        'reason' => 'mpesa_stk_push_failed',
-                        'error' => $e->getMessage(),
-                    ]);
-
-                    $this->logger->error('STK push failed permanently', [
-                        'transaction_id' => $txIdString,
-                        'error' => $e->getMessage()
-                    ]);
-                } else {
-                    usleep(500_000 * $attempt);
+                    $this->failTransaction($transaction, 'mpesa_stk_push_failed', $e->getMessage());
+                    return;
                 }
+
+                // Exponential backoff
+                usleep(500_000 * $attempt);
             }
         }
+    }
+
+    private function failTransaction(
+        \PenPay\Domain\Payments\Aggregate\Transaction $transaction,
+        string $reason,
+        ?string $providerError = null
+    ): void {
+        $transaction->fail($reason, $providerError);
+        $this->txRepo->save($transaction);
+
+        $this->publisher->publish('deposits.failed', [
+            'transaction_id' => (string)$transaction->id(),
+            'user_id' => $transaction->userId(),
+            'reason' => $reason,
+            'provider_error' => $providerError,
+            'timestamp' => time(),
+        ]);
+
+        $this->logger->error('Deposit failed permanently', [
+            'transaction_id' => (string)$transaction->id(),
+            'reason' => $reason,
+            'provider_error' => $providerError,
+        ]);
     }
 }

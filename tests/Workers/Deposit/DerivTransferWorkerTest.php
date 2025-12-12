@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace PenPay\Tests\Workers\Deposit;
@@ -8,18 +9,22 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use PenPay\Domain\Payments\Aggregate\Transaction;
 use PenPay\Domain\Payments\Entity\DerivTransfer;
-use PenPay\Domain\Payments\Entity\DerivTransferResult;
+use PenPay\Domain\Payments\Entity\DerivResult;
 use PenPay\Domain\Payments\Entity\MpesaRequest;
 use PenPay\Domain\Payments\Repository\TransactionRepositoryInterface;
-use PenPay\Domain\Payments\ValueObject\TransactionStatus;
+use PenPay\Domain\Payments\ValueObject\IdempotencyKey;
 use PenPay\Domain\Shared\Kernel\TransactionId;
 use PenPay\Domain\Wallet\ValueObject\Money;
+use PenPay\Domain\Wallet\ValueObject\LockedRate;
+use PenPay\Domain\Shared\ValueObject\PhoneNumber;
 use PenPay\Infrastructure\Deriv\Deposit\DerivDepositGatewayInterface;
+use PenPay\Infrastructure\Deriv\DerivConfig;
 use PenPay\Infrastructure\Queue\Publisher\RedisStreamPublisherInterface;
 use PenPay\Workers\Deposit\DerivTransferWorker;
 use Psr\Log\LoggerInterface;
 use React\EventLoop\LoopInterface;
-use React\Promise\Promise;
+use React\Promise\Deferred;
+use React\Promise\PromiseInterface;
 
 final class DerivTransferWorkerTest extends TestCase
 {
@@ -28,6 +33,7 @@ final class DerivTransferWorkerTest extends TestCase
     private RedisStreamPublisherInterface&MockObject $publisher;
     private LoggerInterface&MockObject $logger;
     private LoopInterface&MockObject $loop;
+    private DerivConfig&MockObject $derivConfig;
     private DerivTransferWorker $worker;
 
     protected function setUp(): void
@@ -37,13 +43,15 @@ final class DerivTransferWorkerTest extends TestCase
         $this->publisher = $this->createMock(RedisStreamPublisherInterface::class);
         $this->logger = $this->createMock(LoggerInterface::class);
         $this->loop = $this->createMock(LoopInterface::class);
+        $this->derivConfig = $this->createMock(DerivConfig::class);
 
         $this->worker = new DerivTransferWorker(
             $this->txRepo,
             $this->derivGateway,
             $this->publisher,
             $this->logger,
-            $this->loop
+            $this->loop,
+            $this->derivConfig
         );
     }
 
@@ -87,7 +95,7 @@ final class DerivTransferWorkerTest extends TestCase
             ->method('info')
             ->with($this->stringContains('already finalized'));
 
-        $this->worker->handle(['transaction_id' => (string)$tx->getId()]);
+        $this->worker->handle(['transaction_id' => (string)$tx->id()]);
     }
 
     /** @test */
@@ -103,7 +111,7 @@ final class DerivTransferWorkerTest extends TestCase
             ->method('warning')
             ->with($this->stringContains('no M-Pesa callback yet'));
 
-        $this->worker->handle(['transaction_id' => (string)$tx->getId()]);
+        $this->worker->handle(['transaction_id' => (string)$tx->id()]);
     }
 
     /** @test */
@@ -111,9 +119,11 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createMpesaConfirmedTransaction();
 
+        // Use reflection to remove deriv login ID (simulating missing data)
         $ref = new \ReflectionClass($tx);
-        $ref->getProperty('userDerivLoginId')->setValue($tx, null);
-        $ref->getProperty('paymentAgentToken')->setValue($tx, null);
+        $prop = $ref->getProperty('userDerivLoginId');
+        $prop->setAccessible(true);
+        $prop->setValue($tx, null);
 
         $this->txRepo->expects($this->once())
             ->method('getById')
@@ -127,7 +137,7 @@ final class DerivTransferWorkerTest extends TestCase
             ->method('publish')
             ->with('deposits.failed', $this->callback(fn($p) => $p['reason'] === 'missing_deriv_data'));
 
-        $this->worker->handle(['transaction_id' => (string)$tx->getId()]);
+        $this->worker->handle(['transaction_id' => (string)$tx->id()]);
     }
 
     /** @test */
@@ -135,31 +145,40 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createMpesaConfirmedTransactionWithDerivData();
 
+        $this->derivConfig->expects($this->once())
+            ->method('agentToken')
+            ->willReturn('agent_token_xyz');
+
+        $this->derivConfig->expects($this->once())
+            ->method('defaultLoginId')
+            ->willReturn('PA1234567');
+
         $this->txRepo->expects($this->once())
             ->method('getById')
-            ->with($tx->getId())
+            ->with($tx->id())
             ->willReturn($tx);
 
-        $successResult = DerivTransferResult::success(
+        $successResult = DerivResult::success(
             transferId: 'deriv-transfer-123',
             txnId: 'deriv-txn-456',
-            amountUsd: 10.5,
+            amountUsd: Money::usd(1050), // $10.50
             rawResponse: ['status' => 'ok']
         );
 
-        $promise = new Promise(function ($resolve) use ($successResult) {
-            $resolve($successResult);
-        });
+        // Create fresh promise that resolves immediately
+        $promise = $this->createResolvedPromise($successResult);
 
         $this->derivGateway->expects($this->once())
             ->method('deposit')
             ->willReturn($promise);
 
+        // Mock loop->run() to simulate promise resolution
         $this->loop->expects($this->once())
-            ->method('run')
-            ->willReturnCallback(function () use ($promise) {
-                $promise->then(fn($r) => $r);
-            });
+            ->method('run');
+
+        // Mock loop->stop() being called when promise resolves
+        $this->loop->expects($this->once())
+            ->method('stop');
 
         $this->txRepo->expects($this->once())
             ->method('save')
@@ -172,9 +191,9 @@ final class DerivTransferWorkerTest extends TestCase
         $this->logger->expects($this->atLeastOnce())
             ->method('info');
 
-        $this->worker->handle(['transaction_id' => (string)$tx->getId()]);
+        $this->worker->handle(['transaction_id' => (string)$tx->id()]);
 
-        $this->assertTrue($tx->getStatus()->isCompleted());
+        $this->assertTrue($tx->status()->isCompleted());
     }
 
     /** @test */
@@ -182,24 +201,26 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createMpesaConfirmedTransactionWithDerivData();
 
+        $this->derivConfig->expects($this->exactly(3))
+            ->method('agentToken')
+            ->willReturn('agent_token_xyz');
+
         $this->txRepo->expects($this->once())
             ->method('getById')
             ->willReturn($tx);
 
-        // Create rejected promises for all 3 attempts
-        $promise = new Promise(function ($resolve, $reject) {
-            $reject(new \RuntimeException('Deriv API timeout'));
-        });
+        // Create rejected promise that gets reused 3 times
+        $rejectedPromise = $this->createRejectedPromise(new \RuntimeException('Deriv API timeout'));
 
         $this->derivGateway->expects($this->exactly(3))
             ->method('deposit')
-            ->willReturn($promise);
+            ->willReturn($rejectedPromise);
 
         $this->loop->expects($this->exactly(3))
-            ->method('run')
-            ->willReturnCallback(function () use ($promise) {
-                $promise->then(null, fn($e) => $e);
-            });
+            ->method('run');
+
+        $this->loop->expects($this->exactly(3))
+            ->method('stop');
 
         $this->txRepo->expects($this->once())
             ->method('save')
@@ -216,9 +237,9 @@ final class DerivTransferWorkerTest extends TestCase
         $this->logger->expects($this->exactly(4))
             ->method('warning');
 
-        $this->worker->handle(['transaction_id' => (string)$tx->getId()]);
+        $this->worker->handle(['transaction_id' => (string)$tx->id()]);
 
-        $this->assertTrue($tx->getStatus()->isFailed());
+        $this->assertTrue($tx->status()->isFailed());
     }
 
     /** @test */
@@ -226,28 +247,31 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createMpesaConfirmedTransactionWithDerivData();
 
+        $this->derivConfig->expects($this->exactly(3))
+            ->method('agentToken')
+            ->willReturn('agent_token_xyz');
+
         $this->txRepo->expects($this->once())
             ->method('getById')
             ->willReturn($tx);
 
-        $failureResult = DerivTransferResult::failure(
+        $failureResult = DerivResult::failure(
             errorMessage: 'Insufficient balance',
             rawResponse: ['error' => ['code' => 'InsufficientBalance']]
         );
 
-        $promise = new Promise(function ($resolve) use ($failureResult) {
-            $resolve($failureResult);
-        });
+        // Create resolved promise with failure result
+        $promise = $this->createResolvedPromise($failureResult);
 
         $this->derivGateway->expects($this->exactly(3))
             ->method('deposit')
             ->willReturn($promise);
 
         $this->loop->expects($this->exactly(3))
-            ->method('run')
-            ->willReturnCallback(function () use ($promise) {
-                $promise->then(fn($r) => $r);
-            });
+            ->method('run');
+
+        $this->loop->expects($this->exactly(3))
+            ->method('stop');
 
         $this->txRepo->expects($this->once())
             ->method('save');
@@ -256,9 +280,9 @@ final class DerivTransferWorkerTest extends TestCase
             ->method('publish')
             ->with('deposits.failed', $this->anything());
 
-        $this->worker->handle(['transaction_id' => (string)$tx->getId()]);
+        $this->worker->handle(['transaction_id' => (string)$tx->id()]);
 
-        $this->assertTrue($tx->getStatus()->isFailed());
+        $this->assertTrue($tx->status()->isFailed());
     }
 
     /** @test */
@@ -266,14 +290,27 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createMpesaConfirmedTransactionWithDerivData();
 
+        $this->derivConfig->expects($this->once())
+            ->method('agentToken')
+            ->willReturn('agent_token_xyz');
+
+        $this->derivConfig->expects($this->once())
+            ->method('defaultLoginId')
+            ->willReturn('PA1234567');
+
         $this->txRepo->expects($this->once())
             ->method('getById')
             ->willReturn($tx);
 
-        $successResult = DerivTransferResult::success('T1', 'D1', 10.5, []);
-        $promise = new Promise(function ($resolve) use ($successResult) {
-            $resolve($successResult);
-        });
+        $successResult = DerivResult::success(
+            transferId: 'T1',
+            txnId: 'D1',
+            amountUsd: Money::usd(1050),
+            rawResponse: []
+        );
+
+        // Create fresh resolved promise
+        $promise = $this->createResolvedPromise($successResult);
 
         $this->derivGateway->expects($this->once())
             ->method('deposit')
@@ -290,16 +327,19 @@ final class DerivTransferWorkerTest extends TestCase
             ->willReturn($promise);
 
         $this->loop->expects($this->once())
-            ->method('run')
-            ->willReturnCallback(function () use ($promise) {
-                $promise->then(fn($r) => $r);
-            });
+            ->method('run');
 
-        $this->txRepo->expects($this->once())->method('save');
-        $this->publisher->expects($this->once())->method('publish');
+        $this->loop->expects($this->once())
+            ->method('stop');
+
+        $this->txRepo->expects($this->once())
+            ->method('save');
+
+        $this->publisher->expects($this->once())
+            ->method('publish');
 
         $this->worker->handle([
-            'transaction_id' => (string)$tx->getId(),
+            'transaction_id' => (string)$tx->id(),
             'mpesa_receipt' => 'RKL9ABCDEF',
             'phone' => '254712345678',
         ]);
@@ -310,23 +350,26 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createMpesaConfirmedTransactionWithDerivData();
 
+        $this->derivConfig->expects($this->exactly(3))
+            ->method('agentToken')
+            ->willReturn('agent_token_xyz');
+
         $this->txRepo->expects($this->once())
             ->method('getById')
             ->willReturn($tx);
 
-        $promise = new Promise(function ($resolve, $reject) {
-            $reject(new \RuntimeException('Network error'));
-        });
+        // Create rejected promise
+        $rejectedPromise = $this->createRejectedPromise(new \RuntimeException('Network error'));
 
         $this->derivGateway->expects($this->exactly(3))
             ->method('deposit')
-            ->willReturn($promise);
+            ->willReturn($rejectedPromise);
 
         $this->loop->expects($this->exactly(3))
-            ->method('run')
-            ->willReturnCallback(function () use ($promise) {
-                $promise->then(null, fn($e) => $e);
-            });
+            ->method('run');
+
+        $this->loop->expects($this->exactly(3))
+            ->method('stop');
 
         $infoCallCount = 0;
         $this->logger->expects($this->exactly(3))
@@ -353,19 +396,50 @@ final class DerivTransferWorkerTest extends TestCase
         $this->txRepo->expects($this->once())->method('save');
         $this->publisher->expects($this->once())->method('publish');
 
-        $this->worker->handle(['transaction_id' => (string)$tx->getId()]);
+        $this->worker->handle(['transaction_id' => (string)$tx->id()]);
     }
 
-    // === HELPERS ===
+    // ===================================================================
+    // HELPER METHODS
+    // ===================================================================
+
+    /**
+     * Create a promise that resolves immediately with the given value
+     */
+    private function createResolvedPromise($value): PromiseInterface
+    {
+        $deferred = new Deferred();
+        $promise = $deferred->promise();
+        
+        // Immediately resolve with the value
+        $deferred->resolve($value);
+        
+        return $promise;
+    }
+
+    /**
+     * Create a promise that rejects immediately with the given error
+     */
+    private function createRejectedPromise(\Throwable $error): PromiseInterface
+    {
+        $deferred = new Deferred();
+        $promise = $deferred->promise();
+        
+        // Immediately reject with the error
+        $deferred->reject($error);
+        
+        return $promise;
+    }
+
     private function createPendingTransactionWithDerivData(): Transaction
     {
         return Transaction::initiateDeposit(
             id: TransactionId::generate(),
-            amountKes: Money::kes(100000),
-            idempotencyKey: \PenPay\Domain\Payments\ValueObject\IdempotencyKey::generate(),
-            userDerivLoginId: 'CR123456',
-            paymentAgentToken: 'agent_token_xyz',
-            amountUsd: 10.5
+            userId: 'user-123',
+            amountUsd: Money::usd(1050), // $10.50
+            lockedRate: LockedRate::lock(100.0), // 1 USD = 100 KES
+            idempotencyKey: IdempotencyKey::fromHeader('deposit-test-' . uniqid()),
+            userDerivLoginId: 'CR123456'
         );
     }
 
@@ -373,18 +447,21 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createPendingTransactionWithDerivData();
 
-        $mpesaRequest = new MpesaRequest(
-            transactionId: $tx->getId(),
-            phoneNumber: '254712345678',
-            amountKes: Money::kes(100000),
-            merchantRequestId: 'merchant-test-123',
+        // Transition through proper states
+        $tx->markStkPushInitiated(); // PENDING → PROCESSING
+        $tx->markAwaitingMpesaCallback(); // PROCESSING → AWAITING_MPESA_CALLBACK
+
+        // Now we can record M-Pesa callback
+        $mpesaRequest = MpesaRequest::fromCallback(
             checkoutRequestId: 'ws_CO_20250425123456789',
             mpesaReceiptNumber: 'RKL9ABCDEF',
+            phoneNumber: PhoneNumber::fromKenyan('254712345678'),
+            amountKes: Money::kes(105000), // KES equivalent of $10.50 at rate 100
             callbackReceivedAt: new DateTimeImmutable(),
-            initiatedAt: new DateTimeImmutable('2025-04-25 10:00:00')
+            merchantRequestId: 'merchant-test-123'
         );
 
-        $tx->recordMpesaCallback($mpesaRequest);
+        $tx->recordMpesaCallback($mpesaRequest); // AWAITING_MPESA_CALLBACK → AWAITING_DERIV_CONFIRMATION
         return $tx;
     }
 
@@ -397,12 +474,11 @@ final class DerivTransferWorkerTest extends TestCase
     {
         $tx = $this->createMpesaConfirmedTransactionWithDerivData();
 
-        $ref = new \ReflectionClass($tx);
-        $ref->getProperty('status')->setValue($tx, TransactionStatus::COMPLETED);
-
-        $derivTransfer = DerivTransfer::success(
-            transactionId: $tx->getId(),
-            derivAccountId: 'CR123456',
+        // Create a deriv transfer to complete the transaction
+        $derivTransfer = DerivTransfer::forDeposit(
+            transactionId: $tx->id(),
+            paymentAgentLoginId: 'PA1234567',
+            userDerivLoginId: 'CR123456',
             amountUsd: Money::usd(1050),
             derivTransferId: 'deriv-transfer-123',
             derivTxnId: 'deriv-txn-456',
@@ -410,8 +486,7 @@ final class DerivTransferWorkerTest extends TestCase
             rawResponse: ['status' => 'ok']
         );
 
-        $ref->getProperty('derivTransfer')->setValue($tx, $derivTransfer);
-
+        $tx->recordDerivTransfer($derivTransfer);
         return $tx;
     }
 }

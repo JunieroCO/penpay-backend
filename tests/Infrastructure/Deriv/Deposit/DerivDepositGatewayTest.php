@@ -6,7 +6,7 @@ namespace PenPay\Tests\Infrastructure\Deriv\Deposit;
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\MockObject\MockObject;
 use PenPay\Infrastructure\Deriv\Deposit\DerivDepositGateway;
-use PenPay\Domain\Payments\Entity\DerivTransferResult;
+use PenPay\Domain\Payments\Entity\DerivResult;
 use PenPay\Infrastructure\DerivWsGateway\WsClient;
 use React\Promise\PromiseInterface;
 
@@ -68,11 +68,11 @@ final class DerivDepositGatewayTest extends TestCase
 
         $result = $this->awaitPromise($promise);
 
-        $this->assertInstanceOf(DerivTransferResult::class, $result);
+        $this->assertInstanceOf(DerivResult::class, $result);
         $this->assertTrue($result->isSuccess());
         $this->assertSame('123456789', $result->transferId());  // transaction_id becomes transferId
         $this->assertSame('123456789', $result->txnId());       // transaction_id also becomes txnId
-        $this->assertSame(50.0, $result->amountUsd());
+        $this->assertSame(50.0, $result->amountUsd()->toDecimal());
     }
 
     /** @test */
@@ -114,11 +114,11 @@ final class DerivDepositGatewayTest extends TestCase
 
         $result = $this->awaitPromise($promise);
 
-        $this->assertInstanceOf(DerivTransferResult::class, $result);
+        $this->assertInstanceOf(DerivResult::class, $result);
         $this->assertTrue($result->isSuccess());
         $this->assertSame('987654321', $result->transferId());
         $this->assertSame('987654321', $result->txnId());
-        $this->assertSame(25.0, $result->amountUsd());
+        $this->assertSame(25.0, $result->amountUsd()->toDecimal());
     }
 
     /** @test */
@@ -152,7 +152,7 @@ final class DerivDepositGatewayTest extends TestCase
 
         $result = $this->awaitPromise($promise);
 
-        $this->assertInstanceOf(DerivTransferResult::class, $result);
+        $this->assertInstanceOf(DerivResult::class, $result);
         $this->assertFalse($result->isSuccess());
         $this->assertSame('Transfer failed: insufficient funds', $result->errorMessage());
     }
@@ -409,7 +409,7 @@ final class DerivDepositGatewayTest extends TestCase
         $result = $this->awaitPromise($promise);
 
         $this->assertTrue($result->isSuccess());
-        $this->assertSame(123.45, $result->amountUsd());
+        $this->assertSame(123.45, $result->amountUsd()->toDecimal());
     }
 
     /** @test */

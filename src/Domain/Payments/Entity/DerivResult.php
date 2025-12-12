@@ -3,18 +3,17 @@ declare(strict_types=1);
 
 namespace PenPay\Domain\Payments\Entity;
 
+use PenPay\Domain\Wallet\ValueObject\Money;
 use RuntimeException;
+use InvalidArgumentException;
 
-/**
- * Immutable result of a Deriv Payment Agent deposit attempt
- */
-final readonly class DerivTransferResult
+final readonly class DerivResult
 {
     private function __construct(
         public bool $success,
         public ?string $transferId,
         public ?string $txnId,
-        public ?float $amountUsd,
+        public ?Money $amountUsd,
         public ?string $errorMessage,
         public array $rawResponse,
     ) {}
@@ -22,9 +21,13 @@ final readonly class DerivTransferResult
     public static function success(
         string $transferId,
         string $txnId,
-        float $amountUsd,
+        Money $amountUsd,
         array $rawResponse = []
     ): self {
+        if (!$amountUsd->currency->isUsd()) {
+            throw new InvalidArgumentException('Deriv transfer result must be reported in USD (Money::USD).');
+        }
+
         return new self(
             success: true,
             transferId: $transferId,
@@ -49,42 +52,46 @@ final readonly class DerivTransferResult
         );
     }
 
-    public function isSuccess(): bool
-    {
-        return $this->success;
-    }
-
-    public function amountUsd(): float
-    {
-        if (!$this->success) {
-            throw new RuntimeException('Cannot get amountUsd on failed result');
-        }
-        return $this->amountUsd;
-    }
+    public function isSuccess(): bool { return $this->success; }
+    public function isFailure(): bool { return !$this->success; }
 
     public function transferId(): string
     {
-        if (!$this->success) {
-            throw new RuntimeException('Cannot get transferId on failed result');
-        }
+        $this->ensureSuccess();
         return $this->transferId;
     }
 
     public function txnId(): string
     {
-        if (!$this->success) {
-            throw new RuntimeException('Cannot get txnId on failed result');
-        }
+        $this->ensureSuccess();
         return $this->txnId;
     }
 
-    public function errorMessage(): ?string
+    public function amountUsd(): Money
     {
+        $this->ensureSuccess();
+        return $this->amountUsd;
+    }
+
+    public function errorMessage(): string
+    {
+        $this->ensureFailure();
         return $this->errorMessage;
     }
 
-    public function raw(): array
+    public function raw(): array { return $this->rawResponse; }
+
+    private function ensureSuccess(): void
     {
-        return $this->rawResponse;
+        if (!$this->success) {
+            throw new RuntimeException('Cannot access success-fields on a failed DerivTransferResult.');
+        }
+    }
+
+    private function ensureFailure(): void
+    {
+        if ($this->success) {
+            throw new RuntimeException('Cannot access error message on a successful DerivTransferResult.');
+        }
     }
 }
