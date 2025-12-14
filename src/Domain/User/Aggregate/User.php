@@ -10,7 +10,8 @@ use PenPay\Domain\User\ValueObject\{
     PhoneNumber,
     DerivLoginId,
     PasswordHash,
-    KycSnapshot
+    KycSnapshot,
+    UserStatus
 };
 use PenPay\Domain\User\Entity\Device;
 use PenPay\Domain\User\Event\{
@@ -33,6 +34,9 @@ final class User extends AggregateRoot
         public readonly DerivLoginId $derivLoginId,
         public readonly KycSnapshot $kyc,
         public readonly PasswordHash $passwordHash,
+        private UserStatus $status,
+        private bool $isVerified,
+        private bool $onboardingCompleted,
         private array $devices = [],
     ) {
         parent::__construct();
@@ -46,7 +50,17 @@ final class User extends AggregateRoot
         KycSnapshot $kyc,
         PasswordHash $passwordHash,
     ): self {
-        $user = new self($id, $email, $phone, $derivLoginId, $kyc, $passwordHash);
+        $user = new self(
+            $id, 
+            $email, 
+            $phone, 
+            $derivLoginId, 
+            $kyc, 
+            $passwordHash, 
+            UserStatus::pending(),
+            false, // isVerified starts as false
+            false  // onboardingCompleted starts as false
+        );
 
         $user->raise(new UserRegistered(
             userId: $id,
@@ -75,6 +89,9 @@ final class User extends AggregateRoot
             derivLoginId: $this->derivLoginId,
             kyc: $this->kyc,
             passwordHash: $this->passwordHash,
+            status: $this->status,
+            isVerified: $this->isVerified,
+            onboardingCompleted: $this->onboardingCompleted,
             devices: [...$this->devices, $newDevice],
         );
 
@@ -103,12 +120,95 @@ final class User extends AggregateRoot
             derivLoginId: $this->derivLoginId,
             kyc: $this->kyc,
             passwordHash: $newHash,
+            status: $this->status,
+            isVerified: $this->isVerified,
+            onboardingCompleted: $this->onboardingCompleted,
             devices: $this->devices,
         );
 
         $updated->raise(new PasswordChanged(userId: $this->id));
 
         return $updated;
+    }
+
+    public function markAsVerified(): self
+    {
+        if ($this->isVerified) {
+            return $this;
+        }
+
+        return new self(
+            id: $this->id,
+            email: $this->email,
+            phone: $this->phone,
+            derivLoginId: $this->derivLoginId,
+            kyc: $this->kyc,
+            passwordHash: $this->passwordHash,
+            status: $this->status,
+            isVerified: true,
+            onboardingCompleted: $this->onboardingCompleted,
+            devices: $this->devices,
+        );
+    }
+
+    public function completeOnboarding(): self
+    {
+        if ($this->onboardingCompleted) {
+            return $this;
+        }
+
+        return new self(
+            id: $this->id,
+            email: $this->email,
+            phone: $this->phone,
+            derivLoginId: $this->derivLoginId,
+            kyc: $this->kyc,
+            passwordHash: $this->passwordHash,
+            status: $this->status,
+            isVerified: $this->isVerified,
+            onboardingCompleted: true,
+            devices: $this->devices,
+        );
+    }
+
+    public function changeStatus(UserStatus $newStatus): self
+    {
+        if ($this->status->equals($newStatus)) {
+            return $this;
+        }
+
+        return new self(
+            id: $this->id,
+            email: $this->email,
+            phone: $this->phone,
+            derivLoginId: $this->derivLoginId,
+            kyc: $this->kyc,
+            passwordHash: $this->passwordHash,
+            status: $newStatus,
+            isVerified: $this->isVerified,
+            onboardingCompleted: $this->onboardingCompleted,
+            devices: $this->devices,
+        );
+    }
+
+    public function activate(): self
+    {
+        return $this->changeStatus(UserStatus::active());
+    }
+
+    public function suspend(): self
+    {
+        return $this->changeStatus(UserStatus::suspended());
+    }
+
+    public function ban(): self
+    {
+        return $this->changeStatus(UserStatus::banned());
+    }
+
+    public function close(): self
+    {
+        return $this->changeStatus(UserStatus::closed());
     }
 
     private function hasDeviceWithId(string $deviceId): bool
@@ -134,6 +234,9 @@ final class User extends AggregateRoot
         DerivLoginId $derivLoginId,
         KycSnapshot $kyc,
         PasswordHash $passwordHash,
+        UserStatus $status,
+        bool $isVerified,
+        bool $onboardingCompleted,
         array $devices = []
     ): self {
         $user = new self(
@@ -143,17 +246,25 @@ final class User extends AggregateRoot
             derivLoginId: $derivLoginId,
             kyc: $kyc,
             passwordHash: $passwordHash,
+            status: $status,
+            isVerified: $isVerified,
+            onboardingCompleted: $onboardingCompleted,
             devices: $devices,
         );
 
         return $user;
     }
 
-// Immutable getters
-public function id(): UserId { return $this->id; }
-public function email(): Email { return $this->email; }
-public function phone(): PhoneNumber { return $this->phone; }
-public function derivLoginId(): DerivLoginId { return $this->derivLoginId; }
-public function kyc(): KycSnapshot { return $this->kyc; }
-public function passwordHash(): PasswordHash { return $this->passwordHash; }
+    // Immutable getters
+    public function id(): UserId { return $this->id; }
+    public function email(): Email { return $this->email; }
+    public function phone(): PhoneNumber { return $this->phone; }
+    public function derivLoginId(): DerivLoginId { return $this->derivLoginId; }
+    public function kyc(): KycSnapshot { return $this->kyc; }
+    public function passwordHash(): PasswordHash { return $this->passwordHash; }
+    public function status(): UserStatus { return $this->status; }
+    public function isVerified(): bool { return $this->isVerified; }
+    public function isSuspended(): bool { return $this->status->isSuspended(); }
+    public function isBanned(): bool { return $this->status->isBanned(); }
+    public function hasCompletedOnboarding(): bool { return $this->onboardingCompleted; }
 }
